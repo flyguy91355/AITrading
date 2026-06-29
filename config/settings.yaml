@@ -20,14 +20,14 @@ research:
   market_timezone: "America/New_York"
   max_buys_per_scan: 10
   min_conviction_score: 7
-  min_risk_reward_ratio: 3.0
+  min_risk_reward_ratio: 2.1
   position_monitor_interval_minutes: 60
 
 risk_management:
-  max_position_pct: 10.0
+  max_position_pct: 7.0
   starting_position_pct: 3.0
   max_loss_per_trade_pct: 2.0
-  min_cash_reserve_pct: 30.0
+  min_cash_reserve_pct: 10.0
   max_sector_positions: 3
   daily_loss_limit_pct: 2.0
   drawdown_halt_pct: 5.0

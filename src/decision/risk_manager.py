@@ -1,11 +1,14 @@
 """Risk management and position sizing."""
 
 from __future__ import annotations
+import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.research.engine import ResearchReport
     from src.decision.portfolio import Portfolio
+
+logger = logging.getLogger(__name__)
 
 
 class RiskManager:
@@ -62,9 +65,15 @@ class RiskManager:
         order_cost = report.entry_price * (report.position_size_pct / 100 * portfolio.total_value / report.entry_price)
 
         if not self.check_cash_reserve(portfolio, order_cost):
+            remaining = portfolio.cash - order_cost
+            required = portfolio.total_value * self.min_cash_reserve_pct
+            logger.info("  %s RULE FAIL: cash reserve — need $%.0f, would have $%.0f after $%.0f order (cash: $%.0f)",
+                        report.ticker, required, remaining, order_cost, portfolio.cash)
             return False
         if not self.check_daily_loss(portfolio):
+            logger.info("  %s RULE FAIL: daily loss limit exceeded", report.ticker)
             return False
         if self.check_drawdown(portfolio) != "normal":
+            logger.info("  %s RULE FAIL: drawdown status = %s", report.ticker, self.check_drawdown(portfolio))
             return False
         return True

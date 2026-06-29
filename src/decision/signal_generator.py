@@ -69,16 +69,20 @@ class SignalGenerator:
 
     def _evaluate_report(self, report: ResearchReport) -> TradeSignal | None:
         if report.conviction_score < self.min_conviction:
+            logger.info("  %s REJECTED: conviction %d < %d", report.ticker, report.conviction_score, self.min_conviction)
             return None
 
         risk = report.entry_price - report.stop_loss
         if risk <= 0:
+            logger.info("  %s REJECTED: risk <= 0 (entry $%.2f, stop $%.2f)", report.ticker, report.entry_price, report.stop_loss)
             return None
 
         targets = report.take_profit_targets or []
-        mid_target = targets[1] if len(targets) >= 2 else (targets[0] if targets else 0)
-        reward = mid_target - report.entry_price
+        top_target = targets[2] if len(targets) >= 3 else (targets[-1] if targets else 0)
+        reward = top_target - report.entry_price
         if reward <= 0 or reward / risk < self.min_rr_ratio:
+            rr = reward / risk if risk > 0 else 0
+            logger.info("  %s REJECTED: R/R %.2f < %.1f (T2=$%.2f, entry=$%.2f, stop=$%.2f)", report.ticker, rr, self.min_rr_ratio, mid_target, report.entry_price, report.stop_loss)
             return None
 
         position_size = self.risk_manager.calculate_position_size(
@@ -86,10 +90,12 @@ class SignalGenerator:
         )
 
         if not self.risk_manager.check_all_rules(report, self.portfolio):
+            logger.info("  %s REJECTED: failed risk_manager.check_all_rules", report.ticker)
             return None
 
         shares = int(position_size / report.entry_price)
         if shares == 0:
+            logger.info("  %s REJECTED: position size too small (0 shares)", report.ticker)
             return None
 
         return TradeSignal(
