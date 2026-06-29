@@ -70,9 +70,8 @@ class OrderManager:
         order = Order(
             ticker=signal.ticker,
             side=OrderSide.BUY,
-            order_type=OrderType.LIMIT,
+            order_type=OrderType.MARKET,
             quantity=signal.shares,
-            limit_price=round(signal.entry_price, 2),
         )
 
         result = await self.broker.submit_order(order)
