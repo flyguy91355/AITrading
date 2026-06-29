@@ -250,8 +250,7 @@ class DashboardState:
         return candidates
 
     async def run_deep_dives(self, candidates: list[dict]):
-        max_candidates = self.config.get("research", {}).get("deep_dive_max_candidates", 10)
-        for candidate in candidates[:max_candidates]:
+        for candidate in candidates:
             ticker = candidate["ticker"]
             try:
                 entry = self.add_ai_log(ticker, "DEEP_DIVE", "Starting deep-dive analysis...")
@@ -287,11 +286,14 @@ class DashboardState:
     async def _auto_buy_after_deep_dive(self, candidates: list[dict]):
         """Auto-buy candidates after deep-dive confirmation, with portfolio rotation."""
         max_positions = self.config.get("portfolio", {}).get("max_positions", 10)
+        logger.info("Auto-buy evaluation starting — %d candidates, %d/%d positions held",
+                     len(candidates), len(self.portfolio.positions), max_positions)
 
         confirmed = []
         for candidate in candidates:
             ticker = candidate["ticker"]
             if ticker in self.portfolio.positions:
+                logger.info("  %s: already held — skipping", ticker)
                 continue
 
             dd = self.deep_dive_reports.get(ticker)
@@ -314,10 +316,12 @@ class DashboardState:
 
             report = self.research_engine.reports.get(ticker)
             if not report:
+                logger.info("  %s: no research report found — skipping", ticker)
                 continue
 
             signal = self.signal_generator._evaluate_report(report)
             if not signal:
+                logger.info("  %s: failed risk management evaluation", ticker)
                 entry = self.add_ai_log(ticker, "AUTO_TRADE",
                     "Skipping — failed risk management checks", "warning")
                 await self.broadcast({"type": "ai_log", "entry": entry})

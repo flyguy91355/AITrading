@@ -18,7 +18,7 @@ research:
   market_open: "09:30"
   market_close: "16:00"
   market_timezone: "America/New_York"
-  deep_dive_max_candidates: 10
+  max_buys_per_scan: 10
   min_conviction_score: 7
   min_risk_reward_ratio: 3.0
   position_monitor_interval_minutes: 60

@@ -75,7 +75,9 @@ class SignalGenerator:
         if risk <= 0:
             return None
 
-        reward = report.take_profit_targets[0] - report.entry_price if report.take_profit_targets else 0
+        targets = report.take_profit_targets or []
+        mid_target = targets[1] if len(targets) >= 2 else (targets[0] if targets else 0)
+        reward = mid_target - report.entry_price
         if reward <= 0 or reward / risk < self.min_rr_ratio:
             return None
 
