@@ -1,0 +1,41 @@
+# Credentials — NEVER commit
+config/credentials.env
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data (large/generated files)
+data/market_cache/
+data/insider_cache/
+data/research_reports/
+data/trade_history/
+data/*.db
+data/*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude
+.claude/

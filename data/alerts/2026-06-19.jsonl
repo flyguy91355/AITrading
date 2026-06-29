@@ -1,0 +1,2 @@
+{"timestamp": "2026-06-19T11:10:45.742936", "level": "critical", "title": "System Error: Broker", "message": "ALPACA_API_KEY and ALPACA_SECRET_KEY must be set in credentials.env"}
+{"timestamp": "2026-06-19T11:41:09.206323", "level": "info", "title": "Daily Portfolio Summary", "message": "Total Value: $75,000.00 | Day P/L: +$0.00 | Total P/L: +$0.00 (+0.0%) | Cash: $75,000.00 (100.0%) | Positions: 0"}

@@ -1,0 +1,50 @@
+system:
+  name: AITrading
+  version: "0.1.0"
+  log_level: INFO
+
+trading:
+  paper_trading: true
+  broker: alpaca
+  auto_execute: true
+  confirmation_window_seconds: 60
+
+research:
+  scans_per_day: 3
+  scan_times:                      # strategic scan times (ET)
+    - "09:45"                      # post-open: opening volatility settles
+    - "12:30"                      # midday: catch morning reactions & lunch reversals
+    - "15:30"                      # pre-close: end-of-day signals, overnight thesis
+  market_open: "09:30"
+  market_close: "16:00"
+  market_timezone: "America/New_York"
+  deep_dive_max_candidates: 10
+  min_conviction_score: 7
+  min_risk_reward_ratio: 3.0
+  position_monitor_interval_minutes: 60
+
+risk_management:
+  max_position_pct: 10.0
+  starting_position_pct: 3.0
+  max_loss_per_trade_pct: 2.0
+  min_cash_reserve_pct: 30.0
+  max_sector_positions: 3
+  daily_loss_limit_pct: 2.0
+  drawdown_halt_pct: 5.0
+  drawdown_defensive_pct: 10.0
+  drawdown_exit_review_pct: 15.0
+  trailing_stop_enabled: true
+
+portfolio:
+  initial_capital: 75000.0
+  max_positions: 10
+
+data_sources:
+  yahoo_finance: true
+  alpha_vantage: true
+  finnhub: true
+  sec_edgar: true
+  newsapi: true
+
+database:
+  path: data/aitrading.db

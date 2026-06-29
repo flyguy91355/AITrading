@@ -1,0 +1,3 @@
+{"timestamp": "2026-06-20T19:47:38.637983", "level": "critical", "title": "System Error: Broker", "message": "ALPACA_API_KEY and ALPACA_SECRET_KEY must be set in credentials.env"}
+{"timestamp": "2026-06-20T19:55:12.375682", "level": "critical", "title": "System Error: Broker", "message": "ALPACA_API_KEY and ALPACA_SECRET_KEY must be set in credentials.env"}
+{"timestamp": "2026-06-20T20:01:22.068316", "level": "critical", "title": "System Error: Broker", "message": "ALPACA_API_KEY and ALPACA_SECRET_KEY must be set in credentials.env"}
