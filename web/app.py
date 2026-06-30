@@ -1162,7 +1162,7 @@ class DashboardState:
 
     async def _replace_one_watchlist_slot(self):
         """Find one BUY/STRONG BUY from the universe to fill a freed watchlist slot."""
-        min_conviction = self.config.get("research", {}).get("min_conviction_score", 7)
+        min_conviction = max(6, self.config.get("research", {}).get("min_conviction_score", 7) - 1)
         available = self.watchlist_manager.available_from_universe(STOCK_UNIVERSE)
         for ticker in available:
             try:
@@ -1211,7 +1211,9 @@ class DashboardState:
 
         filled = 0
         available = self.watchlist_manager.available_from_universe(STOCK_UNIVERSE)
-        min_conviction = self.config.get("research", {}).get("min_conviction_score", 7)
+        # Watchlist just means "scan this stock regularly" — lower bar than actual trading
+        # Trading still requires min_conviction_score (7); watchlist only needs 6
+        min_conviction = max(6, self.config.get("research", {}).get("min_conviction_score", 7) - 1)
         last_scanned = None
 
         total_available = len(available)
