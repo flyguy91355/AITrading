@@ -84,7 +84,10 @@ class AlpacaBroker(Broker):
                 "side": side,
             }
 
-        if order.order_type == OrderType.MARKET and not order.notional_value:
+        if order.notional_value:
+            pass  # kwargs already complete (notional market buy built above)
+
+        elif order.order_type == OrderType.MARKET:
             kwargs["type"] = "market"
             kwargs["time_in_force"] = "day"
 
