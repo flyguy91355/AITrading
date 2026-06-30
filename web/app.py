@@ -1304,6 +1304,10 @@ class DashboardState:
             if self.config["trading"].get("auto_execute", False) and self.broker_connected:
                 await self._auto_buy_after_deep_dive(candidates)
 
+        # Fill any open watchlist slots from the universe
+        if self.watchlist_manager.slots_available() > 0:
+            await self.run_replacement_scan()
+
         await self.broadcast({"type": "cycle_end", "cycle": self.cycle_count, "next_at": "Manual"})
         entry = self.add_ai_log("SYSTEM", "SCAN",
             f"Manual scan cycle #{self.cycle_count} complete — {len(candidates)} candidates found", "success")
