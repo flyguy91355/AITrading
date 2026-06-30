@@ -162,9 +162,6 @@ class DashboardState:
         )
         self.watchlist_manager.seed(TOP_50_STOCKS)
 
-        self.replacement_scan_day = research_cfg.get("replacement_scan_day", "sunday")
-        rh, rm = research_cfg.get("replacement_scan_time", "18:00").split(":")
-        self.replacement_scan_time = dtime(int(rh), int(rm))
 
     # ── WebSocket helpers ──────────────────────────────────────────────────
 
@@ -1173,6 +1170,13 @@ class DashboardState:
                 if self.config["trading"].get("auto_execute", False) and self.broker_connected:
                     await self._auto_buy_after_deep_dive(candidates)
 
+            # If this was the last scan of the day, run end-of-day replacement scan
+            if self.config.get("research", {}).get("replacement_scan_eod", True):
+                now_et = self._now_et()
+                last_scan_today = max(self.explicit_scan_times) if self.explicit_scan_times else dtime(15, 30)
+                if now_et.time() >= last_scan_today:
+                    await self.run_replacement_scan()
+
             wait_secs, next_label = self._seconds_until_next_scan()
             self.next_cycle_at = next_label
             await self.broadcast({
@@ -1234,25 +1238,7 @@ class DashboardState:
             f"Watchlist: {self.watchlist_manager.size()} stocks.", "success")
         await self.broadcast({"type": "ai_log", "entry": entry})
 
-    async def weekly_maintenance_loop(self):
-        """Triggers the replacement scan once a week on the configured day/time."""
-        day_map = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
-                   "friday": 4, "saturday": 5, "sunday": 6}
-        target_day = day_map.get(self.replacement_scan_day.lower(), 6)
-
-        while True:
-            await asyncio.sleep(3600)  # check once per hour
-            now_et = self._now_et()
-            if now_et.weekday() == target_day:
-                now_time = dtime(now_et.hour, now_et.minute)
-                target = self.replacement_scan_time
-                # Fire within the hour window of the scheduled time
-                if target <= now_time < dtime(target.hour, target.minute + 59 if target.minute < 1 else 59):
-                    logger.info("Weekly maintenance: running replacement scan")
-                    await self.run_replacement_scan()
-                    await asyncio.sleep(3600)  # skip repeat within same hour
-
-    async def run_forced_scan(self):
+async def run_forced_scan(self):
         """Run a full scan cycle regardless of market hours."""
         tickers = [s["ticker"] for s in self.watchlist_manager.get_active()]
         self.cycle_count += 1
@@ -1469,8 +1455,7 @@ async def startup():
     asyncio.create_task(state.auto_scan_loop())
     asyncio.create_task(state.position_update_loop())
     asyncio.create_task(state.position_monitor_loop())
-    asyncio.create_task(state.weekly_maintenance_loop())
-    logger.info("Dashboard started — auto-scan running, position monitor active, weekly maintenance scheduled")
+    logger.info("Dashboard started — auto-scan running, position monitor active")
 
 
 if __name__ == "__main__":

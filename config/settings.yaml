@@ -22,10 +22,9 @@ research:
   min_conviction_score: 7
   min_risk_reward_ratio: 2.1
   position_monitor_interval_minutes: 60
-  weak_signal_threshold: 3        # consecutive HOLD/SELL before eviction
+  weak_signal_threshold: 6        # consecutive HOLD/SELL before eviction (~2 trading days)
   watchlist_size: 50
-  replacement_scan_day: "sunday"
-  replacement_scan_time: "18:00"  # 6 PM ET
+  replacement_scan_eod: true      # scan for replacements after the last daily scan
 
 risk_management:
   max_position_pct: 7.0
@@ -40,7 +39,7 @@ risk_management:
   trailing_stop_enabled: true
 
 portfolio:
-  initial_capital: 75000.0
+  initial_capital: 10000.0
   max_positions: 10
 
 data_sources:
