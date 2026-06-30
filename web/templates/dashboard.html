@@ -510,6 +510,69 @@ tbody tr:hover { background: var(--bg-card-hover); }
 .perf-stat .label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; }
 .perf-stat .value { font-size: 16px; font-weight: 700; }
 .tab-count { font-size: 11px; color: var(--text-muted); }
+
+/* LIVE ACTIVITY FEED */
+.live-feed {
+  height: 180px;
+  min-height: 80px;
+  max-height: 60vh;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+.live-feed-resize {
+  height: 5px;
+  cursor: ns-resize;
+  background: transparent;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.live-feed-resize:hover, .live-feed-resize.dragging { background: var(--accent); }
+.live-feed-header {
+  padding: 5px 12px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.live-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  0%,100% { opacity: 1; } 50% { opacity: 0.3; }
+}
+.live-feed-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+.live-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 12px;
+  font-size: 11px;
+  line-height: 1.4;
+  border-bottom: 1px solid rgba(42,58,78,0.3);
+}
+.live-item:last-child { border-bottom: none; }
+.live-time { color: var(--text-muted); font-size: 10px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.live-ticker { font-weight: 700; color: var(--accent); flex-shrink: 0; min-width: 48px; }
+.live-msg { color: var(--text-secondary); }
+.live-item.buy .live-ticker { color: var(--green); }
+.live-item.sell .live-ticker { color: var(--red); }
+.live-item.warning .live-ticker { color: #f59e0b; }
+.live-item.success .live-ticker { color: var(--green); }
 </style>
 </head>
 <body>
@@ -611,6 +674,17 @@ tbody tr:hover { background: var(--bg-card-hover); }
 
     <div class="tab-content" id="tab-candidates">
       <div style="padding:24px;text-align:center;color:var(--text-muted)">No buy candidates yet — waiting for scan</div>
+    </div>
+
+    <!-- LIVE ACTIVITY FEED -->
+    <div class="live-feed" id="liveFeed">
+      <div class="live-feed-resize" id="liveFeedResize"></div>
+      <div class="live-feed-header">
+        <span class="live-dot"></span> Live Activity
+      </div>
+      <div class="live-feed-body" id="liveFeedBody">
+        <div class="live-item"><span class="live-time">--:--</span><span class="live-ticker">SYSTEM</span><span class="live-msg">Waiting for activity...</span></div>
+      </div>
     </div>
   </div>
 
@@ -1238,7 +1312,61 @@ function appendAiLog(entry) {
   `;
   container.appendChild(el);
   container.scrollTop = container.scrollHeight;
+
+  // Also push to the live feed at the bottom-left
+  appendLiveFeed(entry);
 }
+
+function appendLiveFeed(entry) {
+  const feed = document.getElementById('liveFeedBody');
+  if (!feed) return;
+
+  // Remove placeholder on first real entry
+  const placeholder = feed.querySelector('.live-item');
+  if (placeholder && placeholder.querySelector('.live-msg')?.textContent === 'Waiting for activity...') {
+    placeholder.remove();
+  }
+
+  const item = document.createElement('div');
+  item.className = `live-item ${entry.level || 'info'}`;
+  item.innerHTML = `
+    <span class="live-time">${entry.timestamp}</span>
+    <span class="live-ticker">${entry.ticker}</span>
+    <span class="live-msg">${entry.content}</span>
+  `;
+  feed.appendChild(item);
+
+  // Keep last 200 entries so it doesn't grow forever
+  while (feed.children.length > 200) feed.removeChild(feed.firstChild);
+
+  feed.scrollTop = feed.scrollHeight;
+}
+
+// ── Live feed resize handle ─────────────────────────────────────────────────
+(function() {
+  const handle = document.getElementById('liveFeedResize');
+  const feed   = document.getElementById('liveFeed');
+  if (!handle || !feed) return;
+  let startY, startH;
+  handle.addEventListener('mousedown', e => {
+    startY = e.clientY;
+    startH = feed.offsetHeight;
+    handle.classList.add('dragging');
+    e.preventDefault();
+    const onMove = e => {
+      const delta = startY - e.clientY;   // drag up = taller
+      const newH  = Math.min(Math.max(startH + delta, 80), window.innerHeight * 0.6);
+      feed.style.height = newH + 'px';
+    };
+    const onUp = () => {
+      handle.classList.remove('dragging');
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+})();
 
 // ── Tabs ───────────────────────────────────────────────────────────────────
 
