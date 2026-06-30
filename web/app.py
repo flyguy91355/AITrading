@@ -1190,16 +1190,28 @@ class DashboardState:
         min_conviction = self.config.get("research", {}).get("min_conviction_score", 7)
         last_scanned = None
 
+        total_available = len(available)
+        scanned_count = 0
         for ticker in available:
             if filled >= slots:
                 break
             last_scanned = ticker
+            scanned_count += 1
+            entry = self.add_ai_log(ticker, "UNIVERSE SCAN",
+                f"Scanning {scanned_count}/{total_available} — looking for {slots - filled} more watchlist candidate(s)...",
+                "info")
+            await self.broadcast({"type": "ai_log", "entry": entry})
             try:
                 report = await self.research_engine.analyze_stock(ticker)
             except Exception as e:
                 logger.warning("Replacement scan error on %s: %s", ticker, e)
                 await asyncio.sleep(self.stock_delay)
                 continue
+
+            level = "buy" if report.signal.value in ("BUY", "STRONG BUY") else "neutral"
+            entry = self.add_ai_log(ticker, "UNIVERSE SCAN",
+                f"{report.signal.value} | Conviction {report.conviction_score}/10", level)
+            await self.broadcast({"type": "ai_log", "entry": entry})
 
             if report.signal.value in ("BUY", "STRONG BUY") and report.conviction_score >= min_conviction:
                 self.watchlist_manager.add(ticker, report.company_name, "")
