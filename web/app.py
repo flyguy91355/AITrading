@@ -1269,7 +1269,7 @@ class DashboardState:
             f"Watchlist: {self.watchlist_manager.size()} stocks.", "success")
         await self.broadcast({"type": "ai_log", "entry": entry})
 
-async def run_forced_scan(self):
+    async def run_forced_scan(self):
         """Run a full scan cycle regardless of market hours."""
         tickers = [s["ticker"] for s in self.watchlist_manager.get_active()]
         self.cycle_count += 1
