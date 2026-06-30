@@ -21,7 +21,7 @@ class TradeSignal:
     take_profit_targets: list[float]
     position_size_pct: float
     position_size_dollars: float
-    shares: int
+    shares: float
     reasoning: str
     research_report: ResearchReport
     generated_at: datetime
@@ -93,9 +93,10 @@ class SignalGenerator:
             logger.info("  %s REJECTED: failed risk_manager.check_all_rules", report.ticker)
             return None
 
-        shares = int(position_size / report.entry_price)
-        if shares == 0:
-            logger.info("  %s REJECTED: position size too small (0 shares)", report.ticker)
+        # Use fractional shares — position_size_dollars is the notional amount
+        shares = position_size / report.entry_price if report.entry_price > 0 else 0
+        if shares < 0.001:
+            logger.info("  %s REJECTED: position size too small ($%.2f)", report.ticker, position_size)
             return None
 
         return TradeSignal(

@@ -67,13 +67,24 @@ class AlpacaBroker(Broker):
 
     async def submit_order(self, order: Order) -> Order:
         side = "buy" if order.side == OrderSide.BUY else "sell"
-        kwargs = {
-            "symbol": order.ticker,
-            "qty": order.quantity,
-            "side": side,
-        }
 
-        if order.order_type == OrderType.MARKET:
+        # Use notional (dollar amount) for fractional market buys; qty for everything else
+        if order.notional_value and order.side == OrderSide.BUY and order.order_type == OrderType.MARKET:
+            kwargs = {
+                "symbol": order.ticker,
+                "notional": str(round(order.notional_value, 2)),
+                "side": side,
+                "type": "market",
+                "time_in_force": "day",
+            }
+        else:
+            kwargs = {
+                "symbol": order.ticker,
+                "qty": str(round(order.quantity, 9)).rstrip("0").rstrip(".") if order.quantity % 1 else str(int(order.quantity)),
+                "side": side,
+            }
+
+        if order.order_type == OrderType.MARKET and not order.notional_value:
             kwargs["type"] = "market"
             kwargs["time_in_force"] = "day"
 
@@ -110,16 +121,21 @@ class AlpacaBroker(Broker):
         if result.filled_avg_price:
             order.filled_price = float(result.filled_avg_price)
         if result.filled_qty:
-            order.filled_quantity = int(float(result.filled_qty))
+            order.filled_quantity = float(result.filled_qty)
         if hasattr(result, "filled_at") and result.filled_at:
             try:
                 order.filled_at = datetime.fromisoformat(str(result.filled_at).replace("Z", "+00:00")).replace(tzinfo=None)
             except (ValueError, TypeError):
                 pass
 
-        logger.info("Alpaca order submitted: %s %s %d %s @ %s — ID: %s, Status: %s",
-                     order.side.value, order.ticker, order.quantity, order.order_type.value,
-                     order.limit_price or "MKT", order.broker_order_id, order.status.value)
+        if order.notional_value:
+            logger.info("Alpaca order submitted: %s %s $%.2f notional — ID: %s, Status: %s",
+                        order.side.value, order.ticker, order.notional_value,
+                        order.broker_order_id, order.status.value)
+        else:
+            logger.info("Alpaca order submitted: %s %s %.4g shares %s — ID: %s, Status: %s",
+                        order.side.value, order.ticker, order.quantity, order.order_type.value,
+                        order.broker_order_id, order.status.value)
         return order
 
     async def cancel_order(self, broker_order_id: str) -> bool:
@@ -152,7 +168,7 @@ class AlpacaBroker(Broker):
         return [
             {
                 "ticker": p.symbol,
-                "shares": int(float(p.qty)),
+                "shares": float(p.qty),
                 "entry_price": float(p.avg_entry_price),
                 "current_price": float(p.current_price),
                 "market_value": float(p.market_value),

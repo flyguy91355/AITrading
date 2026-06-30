@@ -71,16 +71,18 @@ class OrderManager:
             ticker=signal.ticker,
             side=OrderSide.BUY,
             order_type=OrderType.MARKET,
-            quantity=signal.shares,
+            notional_value=round(signal.position_size_dollars, 2),
         )
 
         result = await self.broker.submit_order(order)
         self.active_orders[result.broker_order_id] = result
 
+        actual_shares = result.filled_quantity or signal.shares
+
         if result.status == OrderStatus.FILLED:
             self.portfolio.add_position(Position(
                 ticker=signal.ticker,
-                shares=signal.shares,
+                shares=actual_shares,
                 entry_price=result.filled_price or signal.entry_price,
                 current_price=result.filled_price or signal.entry_price,
                 stop_loss=signal.stop_loss,
@@ -95,7 +97,7 @@ class OrderManager:
                     ticker=signal.ticker,
                     side=OrderSide.SELL,
                     order_type=OrderType.STOP,
-                    quantity=signal.shares,
+                    quantity=actual_shares,
                     stop_price=round(signal.stop_loss, 2),
                 )
                 stop_result = await self.broker.submit_order(stop_order)
@@ -103,7 +105,7 @@ class OrderManager:
         else:
             # Buy not yet filled — store stop loss info for later
             self._pending_stops[signal.ticker] = {
-                "shares": signal.shares,
+                "shares": actual_shares,
                 "stop_price": round(signal.stop_loss, 2),
             }
 
