@@ -402,6 +402,9 @@ class DashboardState:
                     await self.broadcast({"type": "ai_log", "entry": entry})
                     logger.info("Auto-executed BUY %s — %d shares @ $%.2f (margin of safety %d%%)",
                                 ticker, signal.shares, order.filled_price or signal.entry_price, margin)
+                    # Free the watchlist slot — held stocks are monitored hourly, no need to scan daily
+                    self.watchlist_manager.remove(ticker)
+                    asyncio.create_task(self._replace_one_watchlist_slot())
             except Exception as e:
                 entry = self.add_ai_log(ticker, "AUTO_TRADE", f"Auto-buy failed: {e}", "error")
                 await self.broadcast({"type": "ai_log", "entry": entry})
@@ -1187,17 +1190,45 @@ class DashboardState:
 
             logger.info("Cycle #%d complete. Next scan at %s", self.cycle_count, next_label)
 
+    async def _replace_one_watchlist_slot(self):
+        """Find one BUY/STRONG BUY from the universe to fill a freed watchlist slot."""
+        min_conviction = self.config.get("research", {}).get("min_conviction_score", 7)
+        available = self.watchlist_manager.available_from_universe(STOCK_UNIVERSE)
+        for ticker in available:
+            try:
+                report = await self.research_engine.analyze_stock(ticker)
+            except Exception:
+                await asyncio.sleep(self.stock_delay)
+                continue
+            if report.signal.value in ("BUY", "STRONG BUY") and report.conviction_score >= min_conviction:
+                self.watchlist_manager.add(ticker, report.company_name, "")
+                entry = self.add_ai_log(ticker, "WATCHLIST",
+                    f"Added to watchlist (replaced bought position) — "
+                    f"{report.signal.value} conviction {report.conviction_score}/10", "buy")
+                await self.broadcast({"type": "ai_log", "entry": entry})
+                logger.info("Watchlist slot filled by %s after buy", ticker)
+                return
+            await asyncio.sleep(self.stock_delay)
+        logger.warning("Could not find a replacement watchlist candidate from universe")
+
     async def run_replacement_scan(self):
-        """Evict underperformers and scan universe until all open slots are filled."""
+        """Evict underperformers and any held positions, scan universe until all slots filled."""
         underperformers = self.watchlist_manager.get_underperformers()
-        if not underperformers:
-            logger.info("Weekly replacement scan: no underperformers — watchlist unchanged")
+
+        # Also remove any watchlist stocks that are now held — they're monitored hourly
+        held_in_watchlist = [t for t in self.watchlist_manager.get_active_tickers()
+                             if t in self.portfolio.positions]
+        for ticker in held_in_watchlist:
+            self.watchlist_manager.remove(ticker)
+
+        if not underperformers and not held_in_watchlist:
+            logger.info("End-of-day replacement scan: watchlist is clean — no changes needed")
             return
 
         for ticker in underperformers:
             self.watchlist_manager.remove(ticker)
 
-        slots = len(underperformers)
+        slots = self.watchlist_manager.slots_available()
         logger.info("Weekly replacement scan: evicted %s — scanning universe for %d replacement(s)",
                     ", ".join(underperformers), slots)
         entry = self.add_ai_log("SYSTEM", "WATCHLIST",
