@@ -29,6 +29,8 @@ from src.decision.portfolio import Portfolio
 from src.execution.order_manager import OrderManager
 from src.execution.broker import OrderSide, OrderType, OrderStatus, Order
 from src.reporting.trade_logger import TradeLogger
+from src.utils.watchlist_manager import WatchlistManager
+from src.data.stock_universe import STOCK_UNIVERSE
 
 logging.basicConfig(
     level=logging.INFO,
@@ -152,6 +154,18 @@ class DashboardState:
 
         self.position_monitor_interval = research_cfg.get("position_monitor_interval_minutes", 60)
 
+        db_path = self.config.get("database", {}).get("path", "data/aitrading.db")
+        self.watchlist_manager = WatchlistManager(
+            db_path=db_path,
+            target_size=research_cfg.get("watchlist_size", 50),
+            weak_threshold=research_cfg.get("weak_signal_threshold", 3),
+        )
+        self.watchlist_manager.seed(TOP_50_STOCKS)
+
+        self.replacement_scan_day = research_cfg.get("replacement_scan_day", "sunday")
+        rh, rm = research_cfg.get("replacement_scan_time", "18:00").split(":")
+        self.replacement_scan_time = dtime(int(rh), int(rm))
+
     # ── WebSocket helpers ──────────────────────────────────────────────────
 
     async def broadcast(self, msg: dict):
@@ -213,7 +227,7 @@ class DashboardState:
             "current_ticker": self.current_ticker,
             "cycle": self.cycle_count,
             "index": self.scan_index,
-            "total": len(TOP_50_STOCKS),
+            "total": self.watchlist_manager.size(),
             "next_cycle": self.next_cycle_at,
             "paused": self.paused,
         }
@@ -559,6 +573,8 @@ class DashboardState:
         is_buy = "BUY" in sig
         is_sell = "SELL" in sig
         is_hold = sig == "HOLD"
+
+        self.watchlist_manager.update_signal(ticker, sig)
 
         level = "buy" if is_buy else "sell" if is_sell else "neutral"
         await log("RESULT",
@@ -920,7 +936,7 @@ class DashboardState:
 
         if cmd == "execute_buy":
             ticker = data.get("ticker", "").upper().strip()
-            valid_tickers = {s["ticker"] for s in TOP_50_STOCKS}
+            valid_tickers = state.watchlist_manager.get_active_tickers()
             if ticker not in valid_tickers:
                 await websocket.send_json({"type": "trade_error", "error": f"Invalid ticker: {ticker}"})
                 return
@@ -1084,11 +1100,10 @@ class DashboardState:
     # ── Auto-scan loop (runs during market hours) ─────────────────────
 
     async def auto_scan_loop(self):
-        tickers = [s["ticker"] for s in TOP_50_STOCKS]
         scan_times = self._scan_times_today()
         scan_labels = [t.strftime("%H:%M") for t in scan_times]
-        logger.info("Auto-scan loop started — %d stocks, %d scans/day at %s ET",
-                    len(tickers), self.scans_per_day, ", ".join(scan_labels))
+        logger.info("Auto-scan loop started — %d scans/day at %s ET",
+                    self.scans_per_day, ", ".join(scan_labels))
 
         while True:
             if self.paused:
@@ -1120,8 +1135,9 @@ class DashboardState:
 
             self.cycle_count += 1
             now_et = self._now_et()
-            logger.info("Starting scan cycle #%d at %s ET", self.cycle_count,
-                        now_et.strftime("%H:%M"))
+            tickers = [s["ticker"] for s in self.watchlist_manager.get_active()]
+            logger.info("Starting scan cycle #%d at %s ET (%d stocks)", self.cycle_count,
+                        now_et.strftime("%H:%M"), len(tickers))
             await self.broadcast({"type": "cycle_start", "cycle": self.cycle_count, "total": len(tickers)})
 
             for i, ticker in enumerate(tickers):
@@ -1167,9 +1183,78 @@ class DashboardState:
 
             logger.info("Cycle #%d complete. Next scan at %s", self.cycle_count, next_label)
 
+    async def run_replacement_scan(self):
+        """Evict underperformers and scan universe until all open slots are filled."""
+        underperformers = self.watchlist_manager.get_underperformers()
+        if not underperformers:
+            logger.info("Weekly replacement scan: no underperformers — watchlist unchanged")
+            return
+
+        for ticker in underperformers:
+            self.watchlist_manager.remove(ticker)
+
+        slots = len(underperformers)
+        logger.info("Weekly replacement scan: evicted %s — scanning universe for %d replacement(s)",
+                    ", ".join(underperformers), slots)
+        entry = self.add_ai_log("SYSTEM", "WATCHLIST",
+            f"Evicted {len(underperformers)} underperformer(s): {', '.join(underperformers)}. "
+            f"Scanning for {slots} replacement(s).", "warning")
+        await self.broadcast({"type": "ai_log", "entry": entry})
+
+        filled = 0
+        available = self.watchlist_manager.available_from_universe(STOCK_UNIVERSE)
+        min_conviction = self.config.get("research", {}).get("min_conviction_score", 7)
+
+        for ticker in available:
+            if filled >= slots:
+                break
+            try:
+                report = await self.research_engine.analyze_stock(ticker)
+            except Exception as e:
+                logger.warning("Replacement scan error on %s: %s", ticker, e)
+                await asyncio.sleep(self.stock_delay)
+                continue
+
+            if report.signal.value in ("BUY", "STRONG BUY") and report.conviction_score >= min_conviction:
+                self.watchlist_manager.add(ticker, report.company_name, "")
+                filled += 1
+                entry = self.add_ai_log(ticker, "WATCHLIST",
+                    f"Added to watchlist — {report.signal.value} conviction {report.conviction_score}/10",
+                    "buy")
+                await self.broadcast({"type": "ai_log", "entry": entry})
+                logger.info("Replacement: added %s (%s, conviction %d)",
+                            ticker, report.signal.value, report.conviction_score)
+
+            await asyncio.sleep(self.stock_delay)
+
+        logger.info("Replacement scan complete: %d/%d slots filled. Watchlist now %d stocks.",
+                    filled, slots, self.watchlist_manager.size())
+        entry = self.add_ai_log("SYSTEM", "WATCHLIST",
+            f"Replacement scan complete — {filled}/{slots} slots filled. "
+            f"Watchlist: {self.watchlist_manager.size()} stocks.", "success")
+        await self.broadcast({"type": "ai_log", "entry": entry})
+
+    async def weekly_maintenance_loop(self):
+        """Triggers the replacement scan once a week on the configured day/time."""
+        day_map = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+                   "friday": 4, "saturday": 5, "sunday": 6}
+        target_day = day_map.get(self.replacement_scan_day.lower(), 6)
+
+        while True:
+            await asyncio.sleep(3600)  # check once per hour
+            now_et = self._now_et()
+            if now_et.weekday() == target_day:
+                now_time = dtime(now_et.hour, now_et.minute)
+                target = self.replacement_scan_time
+                # Fire within the hour window of the scheduled time
+                if target <= now_time < dtime(target.hour, target.minute + 59 if target.minute < 1 else 59):
+                    logger.info("Weekly maintenance: running replacement scan")
+                    await self.run_replacement_scan()
+                    await asyncio.sleep(3600)  # skip repeat within same hour
+
     async def run_forced_scan(self):
         """Run a full scan cycle regardless of market hours."""
-        tickers = [s["ticker"] for s in TOP_50_STOCKS]
+        tickers = [s["ticker"] for s in self.watchlist_manager.get_active()]
         self.cycle_count += 1
         logger.info("FORCED scan cycle #%d starting (%d stocks)", self.cycle_count, len(tickers))
 
@@ -1239,7 +1324,7 @@ async def dashboard():
 
 @app.get("/api/stocks")
 async def get_stocks():
-    return TOP_50_STOCKS
+    return state.watchlist_manager.get_active()
 
 
 @app.get("/api/portfolio")
@@ -1339,7 +1424,7 @@ async def websocket_endpoint(websocket: WebSocket):
             "broker": state.config["trading"]["broker"],
             "paper_trading": state.config["trading"]["paper_trading"],
         },
-        "stocks": TOP_50_STOCKS,
+        "stocks": state.watchlist_manager.get_active(),
         "scan_status": state.get_scan_status(),
         "max_positions": state.config.get("portfolio", {}).get("max_positions", 10),
     })
@@ -1384,7 +1469,8 @@ async def startup():
     asyncio.create_task(state.auto_scan_loop())
     asyncio.create_task(state.position_update_loop())
     asyncio.create_task(state.position_monitor_loop())
-    logger.info("Dashboard started — auto-scan running, position monitor active")
+    asyncio.create_task(state.weekly_maintenance_loop())
+    logger.info("Dashboard started — auto-scan running, position monitor active, weekly maintenance scheduled")
 
 
 if __name__ == "__main__":
