@@ -42,59 +42,6 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="AITrading Dashboard")
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 
-TOP_50_STOCKS = [
-    {"ticker": "AAPL",  "name": "Apple Inc.",             "sector": "Technology"},
-    {"ticker": "MSFT",  "name": "Microsoft Corp.",         "sector": "Technology"},
-    {"ticker": "GOOGL", "name": "Alphabet Inc.",           "sector": "Technology"},
-    {"ticker": "AMZN",  "name": "Amazon.com Inc.",         "sector": "Consumer Disc."},
-    {"ticker": "NVDA",  "name": "NVIDIA Corp.",            "sector": "Technology"},
-    {"ticker": "META",  "name": "Meta Platforms",          "sector": "Technology"},
-    {"ticker": "TSLA",  "name": "Tesla Inc.",              "sector": "Consumer Disc."},
-    {"ticker": "BRK.B", "name": "Berkshire Hathaway",      "sector": "Financials"},
-    {"ticker": "LLY",   "name": "Eli Lilly & Co.",         "sector": "Healthcare"},
-    {"ticker": "AVGO",  "name": "Broadcom Inc.",           "sector": "Technology"},
-    {"ticker": "JPM",   "name": "JPMorgan Chase",          "sector": "Financials"},
-    {"ticker": "V",     "name": "Visa Inc.",               "sector": "Financials"},
-    {"ticker": "UNH",   "name": "UnitedHealth Group",      "sector": "Healthcare"},
-    {"ticker": "MA",    "name": "Mastercard Inc.",         "sector": "Financials"},
-    {"ticker": "XOM",   "name": "Exxon Mobil Corp.",       "sector": "Energy"},
-    {"ticker": "COST",  "name": "Costco Wholesale",        "sector": "Cons. Staples"},
-    {"ticker": "HD",    "name": "Home Depot Inc.",         "sector": "Consumer Disc."},
-    {"ticker": "PG",    "name": "Procter & Gamble",        "sector": "Cons. Staples"},
-    {"ticker": "JNJ",   "name": "Johnson & Johnson",       "sector": "Healthcare"},
-    {"ticker": "ABBV",  "name": "AbbVie Inc.",             "sector": "Healthcare"},
-    {"ticker": "CRM",   "name": "Salesforce Inc.",         "sector": "Technology"},
-    {"ticker": "NFLX",  "name": "Netflix Inc.",            "sector": "Comm. Services"},
-    {"ticker": "AMD",   "name": "Adv. Micro Devices",      "sector": "Technology"},
-    {"ticker": "BAC",   "name": "Bank of America",         "sector": "Financials"},
-    {"ticker": "KO",    "name": "Coca-Cola Co.",           "sector": "Cons. Staples"},
-    {"ticker": "MRK",   "name": "Merck & Co.",             "sector": "Healthcare"},
-    {"ticker": "PEP",   "name": "PepsiCo Inc.",            "sector": "Cons. Staples"},
-    {"ticker": "TMO",   "name": "Thermo Fisher Sci.",      "sector": "Healthcare"},
-    {"ticker": "ORCL",  "name": "Oracle Corp.",            "sector": "Technology"},
-    {"ticker": "ACN",   "name": "Accenture plc",           "sector": "Technology"},
-    {"ticker": "LIN",   "name": "Linde plc",               "sector": "Materials"},
-    {"ticker": "WMT",   "name": "Walmart Inc.",            "sector": "Cons. Staples"},
-    {"ticker": "CSCO",  "name": "Cisco Systems",           "sector": "Technology"},
-    {"ticker": "MCD",   "name": "McDonald's Corp.",        "sector": "Consumer Disc."},
-    {"ticker": "ABT",   "name": "Abbott Labs",             "sector": "Healthcare"},
-    {"ticker": "DIS",   "name": "Walt Disney Co.",         "sector": "Comm. Services"},
-    {"ticker": "ADBE",  "name": "Adobe Inc.",              "sector": "Technology"},
-    {"ticker": "DHR",   "name": "Danaher Corp.",           "sector": "Healthcare"},
-    {"ticker": "WFC",   "name": "Wells Fargo & Co.",       "sector": "Financials"},
-    {"ticker": "INTC",  "name": "Intel Corp.",             "sector": "Technology"},
-    {"ticker": "QCOM",  "name": "Qualcomm Inc.",           "sector": "Technology"},
-    {"ticker": "INTU",  "name": "Intuit Inc.",             "sector": "Technology"},
-    {"ticker": "TXN",   "name": "Texas Instruments",       "sector": "Technology"},
-    {"ticker": "PM",    "name": "Philip Morris Intl.",     "sector": "Cons. Staples"},
-    {"ticker": "NOW",   "name": "ServiceNow Inc.",         "sector": "Technology"},
-    {"ticker": "IBM",   "name": "IBM Corp.",               "sector": "Technology"},
-    {"ticker": "GE",    "name": "GE Aerospace",            "sector": "Industrials"},
-    {"ticker": "CAT",   "name": "Caterpillar Inc.",        "sector": "Industrials"},
-    {"ticker": "AMAT",  "name": "Applied Materials",       "sector": "Technology"},
-    {"ticker": "GS",    "name": "Goldman Sachs",           "sector": "Financials"},
-]
-
 INTER_STOCK_DELAY = 3
 
 
@@ -160,7 +107,6 @@ class DashboardState:
             target_size=research_cfg.get("watchlist_size", 50),
             weak_threshold=research_cfg.get("weak_signal_threshold", 3),
         )
-        self.watchlist_manager.seed(TOP_50_STOCKS)
 
 
     # ── WebSocket helpers ──────────────────────────────────────────────────
