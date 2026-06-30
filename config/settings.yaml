@@ -22,7 +22,7 @@ research:
   min_conviction_score: 7
   min_risk_reward_ratio: 2.1
   position_monitor_interval_minutes: 60
-  weak_signal_threshold: 6        # consecutive HOLD/SELL before eviction (~2 trading days)
+  weak_signal_threshold: 2        # consecutive HOLD/SELL before eviction (same-day if 2 bad scans)
   watchlist_size: 50
   replacement_scan_eod: true      # scan for replacements after the last daily scan
 
