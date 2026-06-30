@@ -1143,12 +1143,12 @@ class DashboardState:
                 if self.config["trading"].get("auto_execute", False) and self.broker_connected:
                     await self._auto_buy_after_deep_dive(candidates)
 
-            # If this was the last scan of the day, run end-of-day replacement scan
-            if self.config.get("research", {}).get("replacement_scan_eod", True):
-                now_et = self._now_et()
-                last_scan_today = max(self.explicit_scan_times) if self.explicit_scan_times else dtime(15, 30)
-                if now_et.time() >= last_scan_today:
-                    await self.run_replacement_scan()
+            # Fill open watchlist slots after every scan (not just 15:30)
+            # Scan stops itself if market closes mid-run; cursor saves progress
+            if (self.config.get("research", {}).get("replacement_scan_eod", True)
+                    and self.watchlist_manager.slots_available() > 0
+                    and self._is_market_open()):
+                await self.run_replacement_scan()
 
             wait_secs, next_label = self._seconds_until_next_scan()
             self.next_cycle_at = next_label
@@ -1218,6 +1218,14 @@ class DashboardState:
         scanned_count = 0
         for ticker in available:
             if filled >= slots:
+                break
+            # Stop if market closes mid-scan — cursor is saved, resumes next open
+            if not self._is_market_open():
+                logger.info("Market closed mid-replacement scan — pausing at %s, cursor saved", ticker)
+                entry = self.add_ai_log("SYSTEM", "WATCHLIST",
+                    f"Market closed — replacement scan paused at {ticker}. "
+                    f"Resumes next market open ({filled}/{slots} slots filled).", "warning")
+                await self.broadcast({"type": "ai_log", "entry": entry})
                 break
             last_scanned = ticker
             scanned_count += 1
