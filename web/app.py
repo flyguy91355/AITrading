@@ -330,11 +330,35 @@ class DashboardState:
                 logger.info("  %s: no research report found — skipping", ticker)
                 continue
 
+            # Upgrade T3 to deep-dive fair value so R/R uses the more accurate estimate
+            if fair_value > 0 and fair_value > report.entry_price:
+                targets = list(report.take_profit_targets) if report.take_profit_targets else []
+                if len(targets) >= 3:
+                    targets[2] = max(targets[2], fair_value)
+                elif len(targets) == 2:
+                    targets.append(fair_value)
+                elif len(targets) == 1:
+                    targets.extend([report.entry_price * 1.07, fair_value])
+                else:
+                    ep = report.entry_price
+                    targets = [ep * 1.04, ep * 1.08, fair_value]
+                report.take_profit_targets = targets
+
             signal = self.signal_generator._evaluate_report(report)
             if not signal:
-                logger.info("  %s: failed risk management evaluation", ticker)
+                # Log specific reason for rejection
+                risk = report.entry_price - report.stop_loss
+                targets = report.take_profit_targets or []
+                top = targets[2] if len(targets) >= 3 else (targets[-1] if targets else 0)
+                rr = (top - report.entry_price) / risk if risk > 0 else 0
+                reason = (
+                    f"R/R {rr:.2f} < {self.config['research']['min_risk_reward_ratio']} "
+                    f"(entry ${report.entry_price:.2f}, stop ${report.stop_loss:.2f}, T3 ${top:.2f})"
+                    if risk > 0 else "invalid stop loss"
+                )
+                logger.info("  %s: rejected — %s", ticker, reason)
                 entry = self.add_ai_log(ticker, "AUTO_TRADE",
-                    "Skipping — failed risk management checks", "warning")
+                    f"Rejected — {reason}", "warning")
                 await self.broadcast({"type": "ai_log", "entry": entry})
                 continue
 
