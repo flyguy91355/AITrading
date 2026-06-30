@@ -1162,7 +1162,7 @@ class DashboardState:
 
     async def _replace_one_watchlist_slot(self):
         """Find one BUY/STRONG BUY from the universe to fill a freed watchlist slot."""
-        min_conviction = max(6, self.config.get("research", {}).get("min_conviction_score", 7) - 1)
+        min_conviction = self.config.get("research", {}).get("min_conviction_score", 7)
         available = self.watchlist_manager.available_from_universe(STOCK_UNIVERSE)
         for ticker in available:
             try:
@@ -1211,9 +1211,7 @@ class DashboardState:
 
         filled = 0
         available = self.watchlist_manager.available_from_universe(STOCK_UNIVERSE)
-        # Watchlist just means "scan this stock regularly" — lower bar than actual trading
-        # Trading still requires min_conviction_score (7); watchlist only needs 6
-        min_conviction = max(6, self.config.get("research", {}).get("min_conviction_score", 7) - 1)
+        min_conviction = self.config.get("research", {}).get("min_conviction_score", 7)
         last_scanned = None
 
         total_available = len(available)
@@ -1323,8 +1321,8 @@ class DashboardState:
             if self.config["trading"].get("auto_execute", False) and self.broker_connected:
                 await self._auto_buy_after_deep_dive(candidates)
 
-        # Fill any open watchlist slots from the universe
-        if self.watchlist_manager.slots_available() > 0:
+        # Fill open watchlist slots — only during market hours so signals are meaningful
+        if self.watchlist_manager.slots_available() > 0 and self._is_market_open():
             await self.run_replacement_scan()
 
         await self.broadcast({"type": "cycle_end", "cycle": self.cycle_count, "next_at": "Manual"})
