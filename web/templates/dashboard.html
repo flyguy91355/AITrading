@@ -567,7 +567,8 @@ tbody tr:hover { background: var(--bg-card-hover); }
 }
 .live-item:last-child { border-bottom: none; }
 .live-time { color: var(--text-muted); font-size: 10px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
-.live-ticker { font-weight: 700; color: var(--accent); flex-shrink: 0; min-width: 48px; }
+.live-ticker { font-weight: 700; color: var(--accent); flex-shrink: 0; min-width: 44px; }
+.live-phase { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-muted); flex-shrink: 0; background: rgba(255,255,255,0.06); border-radius: 3px; padding: 1px 4px; }
 .live-msg { color: var(--text-secondary); }
 .live-item.buy .live-ticker { color: var(--green); }
 .live-item.sell .live-ticker { color: var(--red); }
@@ -1325,7 +1326,22 @@ function appendAiLog(entry) {
   appendLiveFeed(entry);
 }
 
+// Phases shown in the live feed — everything actionable that isn't just a
+// per-stock analysis already visible in the right AI Engine panel.
+const LIVE_FEED_PHASES = new Set([
+  'AUTO_TRADE', 'WATCHLIST', 'RISK', 'TAKE_PROFIT', 'ROTATION',
+  'SYSTEM', 'ERROR',
+]);
+// Universe scan: only show when a stock actually gets added (buy/success level)
+function liveFeedWants(entry) {
+  if (LIVE_FEED_PHASES.has(entry.phase)) return true;
+  if (entry.phase === 'UNIVERSE SCAN' && (entry.level === 'buy' || entry.level === 'success')) return true;
+  return false;
+}
+
 function appendLiveFeed(entry) {
+  if (!liveFeedWants(entry)) return;
+
   const feed = document.getElementById('liveFeedBody');
   if (!feed) return;
 
@@ -1340,11 +1356,12 @@ function appendLiveFeed(entry) {
   item.innerHTML = `
     <span class="live-time">${entry.timestamp}</span>
     <span class="live-ticker">${entry.ticker}</span>
+    <span class="live-phase">${entry.phase}</span>
     <span class="live-msg">${entry.content}</span>
   `;
   feed.appendChild(item);
 
-  // Keep last 200 entries so it doesn't grow forever
+  // Keep last 200 entries
   while (feed.children.length > 200) feed.removeChild(feed.firstChild);
 
   feed.scrollTop = feed.scrollHeight;
