@@ -82,7 +82,7 @@ class SignalGenerator:
         reward = top_target - report.entry_price
         if reward <= 0 or reward / risk < self.min_rr_ratio:
             rr = reward / risk if risk > 0 else 0
-            logger.info("  %s REJECTED: R/R %.2f < %.1f (T2=$%.2f, entry=$%.2f, stop=$%.2f)", report.ticker, rr, self.min_rr_ratio, mid_target, report.entry_price, report.stop_loss)
+            logger.info("  %s REJECTED: R/R %.2f < %.1f (T3=$%.2f, entry=$%.2f, stop=$%.2f)", report.ticker, rr, self.min_rr_ratio, top_target, report.entry_price, report.stop_loss)
             return None
 
         position_size = self.risk_manager.calculate_position_size(
