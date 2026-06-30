@@ -4,7 +4,7 @@
 # the current watchlist members are automatically skipped.
 STOCK_UNIVERSE = [
     # Mega-cap / current watchlist
-    "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "BRK.B",
+    "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "BRK-B",
     "LLY", "AVGO", "JPM", "V", "UNH", "MA", "XOM", "COST", "HD",
     "PG", "JNJ", "ABBV", "CRM", "NFLX", "AMD", "BAC", "KO", "MRK",
     "PEP", "TMO", "ORCL", "ACN", "LIN", "WMT", "CSCO", "MCD", "ABT",
