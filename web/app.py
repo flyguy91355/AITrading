@@ -338,16 +338,21 @@ class DashboardState:
 
         confirmed.sort(key=lambda c: c["score"], reverse=True)
 
+        # Track tickers ordered this scan so pending (unfilled) orders count against the limit
+        pending_tickers: set[str] = set()
+        pending_cash_reserved: float = 0.0
+
         for candidate in confirmed:
             ticker = candidate["ticker"]
             signal = candidate["signal"]
             margin = candidate["margin"]
             fair_value = candidate["fair_value"]
 
-            if ticker in self.portfolio.positions:
+            if ticker in self.portfolio.positions or ticker in pending_tickers:
                 continue
 
-            if len(self.portfolio.positions) >= max_positions:
+            current_count = len(self.portfolio.positions) + len(pending_tickers)
+            if current_count >= max_positions:
                 swapped = await self._try_rotation_swap(candidate)
                 if not swapped:
                     entry = self.add_ai_log(ticker, "AUTO_TRADE",
@@ -355,9 +360,21 @@ class DashboardState:
                     await self.broadcast({"type": "ai_log", "entry": entry})
                     continue
 
+            # Check cash reserve accounting for already-queued orders this scan
+            order_cost = signal.shares * signal.entry_price
+            effective_cash = self.portfolio.cash - pending_cash_reserved
+            required_reserve = self.portfolio.total_value * (
+                self.config["risk_management"]["min_cash_reserve_pct"] / 100)
+            if effective_cash - order_cost < required_reserve:
+                logger.info("  %s SKIPPED: insufficient cash after pending orders (need $%.0f, have $%.0f free)",
+                            ticker, order_cost, effective_cash - required_reserve)
+                continue
+
             try:
                 order = await self.order_manager.execute(signal)
                 if order:
+                    pending_tickers.add(ticker)
+                    pending_cash_reserved += order_cost
                     self.trade_logger.log_trade(signal)
                     result = {
                         "ticker": signal.ticker,
