@@ -1221,10 +1221,17 @@ class DashboardState:
                 break
             last_scanned = ticker
             scanned_count += 1
-            entry = self.add_ai_log(ticker, "UNIVERSE SCAN",
-                f"Scanning {scanned_count}/{total_available} — looking for {slots - filled} more watchlist candidate(s)...",
-                "info")
-            await self.broadcast({"type": "ai_log", "entry": entry})
+
+            # Update the middle panel scan strip so universe scan is visible there too
+            self.current_ticker = ticker
+            await self.broadcast({"type": "scan_progress", "status": {
+                "current_ticker": ticker,
+                "index": scanned_count,
+                "total": total_available,
+                "cycle": self.cycle_count,
+                "label": f"Universe scan — seeking {slots - filled} slot(s)",
+            }})
+
             try:
                 report = await self.research_engine.analyze_stock(ticker)
             except Exception as e:
@@ -1253,10 +1260,20 @@ class DashboardState:
             next_cursor = (STOCK_UNIVERSE.index(last_scanned) + 1) % len(STOCK_UNIVERSE)
             self.watchlist_manager.set_scan_cursor(next_cursor)
 
+        # Clear the scan strip
+        self.current_ticker = ""
+        await self.broadcast({"type": "scan_progress", "status": {
+            "current_ticker": "",
+            "index": scanned_count,
+            "total": total_available,
+            "cycle": self.cycle_count,
+            "label": "Universe scan complete",
+        }})
+
         logger.info("Replacement scan complete: %d/%d slots filled. Watchlist now %d stocks.",
                     filled, slots, self.watchlist_manager.size())
         entry = self.add_ai_log("SYSTEM", "WATCHLIST",
-            f"Replacement scan complete — {filled}/{slots} slots filled. "
+            f"Universe scan complete — {filled}/{slots} slots filled. "
             f"Watchlist: {self.watchlist_manager.size()} stocks.", "success")
         await self.broadcast({"type": "ai_log", "entry": entry})
 

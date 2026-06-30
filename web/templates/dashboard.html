@@ -1002,6 +1002,14 @@ function applyScanProgress(status) {
   document.getElementById('scanProgressText').textContent = `${status.index} / ${status.total}`;
   if (status.cycle > 0) document.getElementById('cycleLabel').textContent = `Cycle #${status.cycle}`;
   if (status.next_cycle) document.getElementById('nextCycleLabel').textContent = `Next: ${status.next_cycle}`;
+  if (status.label) {
+    const ticker = status.current_ticker;
+    const text = ticker ? `${status.label} — ${ticker}` : status.label;
+    document.getElementById('scanTickerLabel').textContent = text;
+    document.getElementById('nextCycleLabel').textContent = '';
+  } else if (status.current_ticker) {
+    document.getElementById('scanTickerLabel').textContent = `Scanning ${status.current_ticker}...`;
+  }
 }
 
 function applyInitScanStatus(status) {
