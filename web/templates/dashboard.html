@@ -698,6 +698,19 @@ let tickerSignals = {};  // cache for re-applying badges after grid re-render
 
 // ── WebSocket ──────────────────────────────────────────────────────────────
 
+let heartbeatTimer = null;
+
+function resetHeartbeat() {
+  clearTimeout(heartbeatTimer);
+  // If no message arrives within 60s, assume connection is stale and force reconnect
+  heartbeatTimer = setTimeout(() => {
+    console.warn('WebSocket heartbeat timeout — reconnecting');
+    document.getElementById('statusDot').classList.remove('connected');
+    document.getElementById('statusText').textContent = 'Reconnecting...';
+    ws.close();
+  }, 60000);
+}
+
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}/ws`);
@@ -705,15 +718,22 @@ function connect() {
   ws.onopen = () => {
     document.getElementById('statusDot').classList.add('connected');
     document.getElementById('statusText').textContent = 'Connected';
+    resetHeartbeat();
   };
 
   ws.onclose = () => {
+    clearTimeout(heartbeatTimer);
     document.getElementById('statusDot').classList.remove('connected');
     document.getElementById('statusText').textContent = 'Reconnecting...';
     setTimeout(connect, 3000);
   };
 
-  ws.onmessage = (e) => handleMessage(JSON.parse(e.data));
+  ws.onerror = () => ws.close();
+
+  ws.onmessage = (e) => {
+    resetHeartbeat();
+    handleMessage(JSON.parse(e.data));
+  };
 }
 
 function handleMessage(msg) {
