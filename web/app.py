@@ -766,12 +766,6 @@ class DashboardState:
                             if self.config["trading"].get("auto_execute", False):
                                 await self._auto_close_position(ticker, pos, "Trailing stop hit")
 
-                    # ── Staged take-profit exits (sell 1/3 at each target) ──
-                    if (self.config["trading"].get("auto_execute", False)
-                            and pos.take_profit_targets
-                            and ticker in self.portfolio.positions):
-                        await self._check_take_profit_targets(ticker, pos)
-
                     # ── Conviction-drop auto-sell ──
                     if (self.config["trading"].get("auto_execute", False)
                             and ticker in self.portfolio.positions):
@@ -843,54 +837,6 @@ class DashboardState:
 
             entry = self.add_ai_log("SYSTEM", "MONITOR",
                 f"Position monitor complete — {len(held_tickers)} stocks updated", "success")
-            await self.broadcast({"type": "ai_log", "entry": entry})
-
-    async def _check_take_profit_targets(self, ticker: str, pos):
-        """Sell 1/3 of remaining shares at each take-profit target."""
-        from src.decision.signal_generator import TradeSignal
-        from src.research.engine import Signal as Sig
-
-        hit_targets = [t for t in pos.take_profit_targets if pos.current_price >= t]
-        if not hit_targets:
-            return
-
-        target_hit = max(hit_targets)
-        target_index = pos.take_profit_targets.index(target_hit) + 1
-        shares_to_sell = max(1, pos.shares // 3)
-
-        if pos.shares <= 1:
-            return
-
-        sell_signal = TradeSignal(
-            ticker=ticker, signal=Sig.SELL, conviction=10,
-            entry_price=pos.current_price, stop_loss=0,
-            take_profit_targets=[], position_size_pct=0,
-            position_size_dollars=shares_to_sell * pos.current_price,
-            shares=shares_to_sell,
-            reasoning=f"Take-profit target {target_index} hit (${target_hit:.2f})",
-            research_report=None, generated_at=datetime.now(),
-            should_execute=True,
-        )
-
-        try:
-            order = await self.order_manager.execute(sell_signal)
-            if order:
-                self.trade_logger.log_trade(sell_signal)
-                pos.take_profit_targets = [t for t in pos.take_profit_targets if t > target_hit]
-                pos.shares -= shares_to_sell
-
-                entry = self.add_ai_log(ticker, "TAKE_PROFIT",
-                    f"TARGET {target_index} hit @ ${target_hit:.2f} — sold {shares_to_sell} shares "
-                    f"({pos.shares} remaining)", "sell")
-                await self.broadcast({"type": "ai_log", "entry": entry})
-                await self.broadcast({"type": "trade_executed", "trade": {
-                    "ticker": ticker, "status": order.status.value,
-                    "filled_price": order.filled_price, "shares": shares_to_sell,
-                }})
-                logger.info("Take-profit %s target %d: sold %d shares @ $%.2f, %d remaining",
-                            ticker, target_index, shares_to_sell, target_hit, pos.shares)
-        except Exception as e:
-            entry = self.add_ai_log(ticker, "ERROR", f"Take-profit sell failed: {e}", "error")
             await self.broadcast({"type": "ai_log", "entry": entry})
 
     async def _auto_close_position(self, ticker: str, pos, reason: str):

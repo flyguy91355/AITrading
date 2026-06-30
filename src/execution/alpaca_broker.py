@@ -90,7 +90,7 @@ class AlpacaBroker(Broker):
 
         elif order.order_type == OrderType.LIMIT:
             kwargs["type"] = "limit"
-            kwargs["time_in_force"] = "day"
+            kwargs["time_in_force"] = "gtc"
             kwargs["limit_price"] = str(round(order.limit_price, 2))
 
         elif order.order_type == OrderType.STOP:
@@ -156,10 +156,10 @@ class AlpacaBroker(Broker):
             ticker=result.symbol,
             side=side,
             order_type=OrderType.MARKET,
-            quantity=int(float(result.qty)),
+            quantity=float(result.qty) if result.qty else 0.0,
             status=ALPACA_STATUS_MAP.get(result.status, OrderStatus.PENDING),
             filled_price=float(result.filled_avg_price) if result.filled_avg_price else None,
-            filled_quantity=int(float(result.filled_qty)) if result.filled_qty else 0,
+            filled_quantity=float(result.filled_qty) if result.filled_qty else 0.0,
             broker_order_id=result.id,
         )
 
