@@ -32,6 +32,29 @@ class WatchlistManager:
                     last_scanned TEXT
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS scan_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
+            """)
+            conn.commit()
+
+    def get_scan_cursor(self) -> int:
+        """Position in the universe list where the next replacement scan should resume."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM scan_state WHERE key = 'universe_cursor'"
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def set_scan_cursor(self, index: int):
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO scan_state (key, value) VALUES ('universe_cursor', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (str(index),),
+            )
             conn.commit()
 
     def size(self) -> int:
@@ -113,6 +136,12 @@ class WatchlistManager:
         return max(0, self.target_size - self.size())
 
     def available_from_universe(self, universe: list[str]) -> list[str]:
-        """Universe tickers not currently in the watchlist."""
+        """Universe tickers not currently in the watchlist, starting from the saved
+        scan cursor and wrapping around — so repeated scans cycle through the full
+        universe before repeating, instead of always restarting at index 0."""
+        if not universe:
+            return []
         current = self.get_active_tickers()
-        return [t for t in universe if t not in current]
+        cursor = self.get_scan_cursor() % len(universe)
+        rotated = universe[cursor:] + universe[:cursor]
+        return [t for t in rotated if t not in current]

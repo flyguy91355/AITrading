@@ -1146,6 +1146,9 @@ class DashboardState:
             except Exception:
                 await asyncio.sleep(self.stock_delay)
                 continue
+            if ticker in STOCK_UNIVERSE:
+                next_cursor = (STOCK_UNIVERSE.index(ticker) + 1) % len(STOCK_UNIVERSE)
+                self.watchlist_manager.set_scan_cursor(next_cursor)
             if report.signal.value in ("BUY", "STRONG BUY") and report.conviction_score >= min_conviction:
                 self.watchlist_manager.add(ticker, report.company_name, "")
                 entry = self.add_ai_log(ticker, "WATCHLIST",
@@ -1185,10 +1188,12 @@ class DashboardState:
         filled = 0
         available = self.watchlist_manager.available_from_universe(STOCK_UNIVERSE)
         min_conviction = self.config.get("research", {}).get("min_conviction_score", 7)
+        last_scanned = None
 
         for ticker in available:
             if filled >= slots:
                 break
+            last_scanned = ticker
             try:
                 report = await self.research_engine.analyze_stock(ticker)
             except Exception as e:
@@ -1207,6 +1212,10 @@ class DashboardState:
                             ticker, report.signal.value, report.conviction_score)
 
             await asyncio.sleep(self.stock_delay)
+
+        if last_scanned and last_scanned in STOCK_UNIVERSE:
+            next_cursor = (STOCK_UNIVERSE.index(last_scanned) + 1) % len(STOCK_UNIVERSE)
+            self.watchlist_manager.set_scan_cursor(next_cursor)
 
         logger.info("Replacement scan complete: %d/%d slots filled. Watchlist now %d stocks.",
                     filled, slots, self.watchlist_manager.size())
