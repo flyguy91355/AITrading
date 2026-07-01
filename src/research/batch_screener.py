@@ -25,37 +25,33 @@ _POLL_INTERVAL_SECS = 60
 _MAX_POLL_SECS = 7200  # 2 hours max wait
 
 
-def _build_analysis_prompt(ticker: str, price: float, fundamental: str,
-                            insider: str, news: str) -> str:
-    return f"""You are a senior equity research analyst. Analyze this stock and produce a structured investment recommendation.
+def _build_analysis_prompt(ticker: str, price: float, fundamental: str) -> str:
+    return f"""You are a quantitative equity analyst doing a technical and fundamental pre-screen.
+Your job: decide if this stock is worth buying NOW based on its technicals and fundamentals.
+This is a pre-screen — you only have technical/fundamental data, no news or insider data.
+Make your best judgment with what's available. Do NOT default to HOLD or NO ACTION just because data is limited.
 
-IMPORTANT RULES:
-- Be conservative. The cardinal rule is NEVER LOSE MONEY.
-- Only recommend BUY or STRONG BUY if conviction is 7/10 or higher.
-- Every recommendation MUST include a stop loss (typically 5-8% below entry).
-- Risk/reward ratio must be at least 3:1.
-- If data is insufficient, recommend NO ACTION.
+RULES:
+- BUY or STRONG BUY: RSI healthy (35-65), price above or near 50-day MA, P/E reasonable for sector
+- HOLD: RSI at extremes or price extended far above MA
+- SELL/STRONG SELL: only if fundamentals clearly broken (negative equity, P/E > 200, etc.)
+- Stop loss: 5-8% below current price
+- Take-profit targets: T1 4-6%, T2 8-12%, T3 15-20% above entry
 
 STOCK: {ticker}
 CURRENT PRICE: ${price:.2f}
 
-── FUNDAMENTAL DATA ──
+── FUNDAMENTAL & TECHNICAL DATA ──
 {fundamental}
 
-── INSIDER ACTIVITY ──
-{insider}
-
-── NEWS ──
-{news}
-
-Respond ONLY with this JSON:
+Respond ONLY with valid JSON (no markdown, no explanation):
 {{
     "conviction_score": <1-10>,
-    "signal": "<STRONG BUY|BUY|HOLD|SELL|STRONG SELL|NO ACTION>",
-    "entry_price": <number>,
-    "stop_loss": <number — 5-8% below entry>,
-    "take_profit_targets": [<T1 4-6% above entry>, <T2 8-12% above entry>, <T3 15-20% above entry max>],
-    "thesis": "<2-3 sentence thesis>"
+    "signal": "<STRONG BUY|BUY|HOLD|SELL|STRONG SELL>",
+    "entry_price": {price:.2f},
+    "stop_loss": <number>,
+    "take_profit_targets": [<T1>, <T2>, <T3>],
+    "thesis": "<1-2 sentences>"
 }}"""
 
 
@@ -83,17 +79,16 @@ async def _gather_light_data(ticker: str) -> dict | None:
         ma50 = float(np.mean(closes[-50:])) if len(closes) >= 50 else price
         rsi_val = _rsi(closes)
 
-        fundamental = (f"Market cap: {mktcap_str} | P/E: {pe} | "
-                       f"50-day MA: ${ma50:.2f} | RSI: {rsi_val:.0f}")
-        insider = "No recent insider data available (light scan)."
-        news = "No recent news available (light scan)."
+        pct_vs_ma = ((price - ma50) / ma50 * 100) if ma50 else 0
+        fundamental = (
+            f"Market cap: {mktcap_str} | P/E: {pe} | "
+            f"50-day MA: ${ma50:.2f} ({pct_vs_ma:+.1f}% vs price) | RSI(14): {rsi_val:.0f}"
+        )
 
         return {
             "ticker": ticker,
             "price": price,
             "fundamental": fundamental,
-            "insider": insider,
-            "news": news,
         }
     except Exception as e:
         logger.debug("Light data fetch failed for %s: %s", ticker, e)
@@ -175,9 +170,7 @@ async def run_nightly_batch(
         data = await _gather_light_data(ticker)
         if not data:
             continue
-        prompt = _build_analysis_prompt(
-            ticker, data["price"],
-            data["fundamental"], data["insider"], data["news"])
+        prompt = _build_analysis_prompt(ticker, data["price"], data["fundamental"])
         batch_requests.append({
             "custom_id": ticker,
             "params": {

@@ -1,7 +1,7 @@
 """Stock universe for watchlist replacement scanning.
 
-Dynamically fetches S&P 500 + S&P 400 MidCap (~900 stocks) from Wikipedia,
-cached for 24 hours. Falls back to the hardcoded list if the fetch fails.
+Dynamically fetches S&P 500 + S&P 400 MidCap + S&P 600 SmallCap (~1500 stocks)
+from Wikipedia, cached for 24 hours. Falls back to the hardcoded list if fetch fails.
 """
 
 import json
@@ -13,6 +13,36 @@ logger = logging.getLogger(__name__)
 
 _CACHE_PATH = Path("data/universe_cache.json")
 _CACHE_TTL_HOURS = 24
+_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; AITrading/1.0; stock research bot)"}
+
+_WIKI_SOURCES = [
+    ("S&P 500",    "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
+     {"id": "constituents"}, ("Symbol",)),
+    ("S&P 400",    "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies",
+     {}, ("Ticker symbol", "Symbol", "Ticker")),
+    ("S&P 600",    "https://en.wikipedia.org/wiki/List_of_S%26P_600_companies",
+     {}, ("Ticker symbol", "Symbol", "Ticker")),
+]
+
+
+def _fetch_wiki_tickers(label: str, url: str, attrs: dict, col_names: tuple) -> list[str]:
+    import io
+    import requests
+    import pandas as pd
+    resp = requests.get(url, headers=_HEADERS, timeout=15)
+    resp.raise_for_status()
+    tables = pd.read_html(io.StringIO(resp.text), attrs=attrs or None)
+    for t in tables:
+        for col in col_names:
+            if col in t.columns:
+                tickers = (t[col].dropna()
+                           .astype(str)
+                           .str.replace(".", "-", regex=False)
+                           .str.strip()
+                           .tolist())
+                logger.info("Fetched %d %s tickers from Wikipedia", len(tickers), label)
+                return tickers
+    raise ValueError(f"No matching column found in {label} Wikipedia table")
 
 
 def get_universe() -> list[str]:
@@ -26,44 +56,31 @@ def get_universe() -> list[str]:
         except Exception:
             pass
 
-    try:
-        import pandas as pd
-        tickers: set[str] = set()
+    tickers: set[str] = set()
+    fetch_ok = False
+    for label, url, attrs, col_names in _WIKI_SOURCES:
+        try:
+            tickers.update(_fetch_wiki_tickers(label, url, attrs, col_names))
+            fetch_ok = True
+        except Exception as e:
+            logger.warning("Universe fetch failed for %s: %s", label, e)
 
-        # S&P 500
-        tables = pd.read_html(
-            "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
-            attrs={"id": "constituents"},
-        )
-        col = "Symbol" if "Symbol" in tables[0].columns else tables[0].columns[0]
-        tickers.update(tables[0][col].str.replace(".", "-", regex=False).tolist())
-        logger.info("Fetched %d S&P 500 tickers from Wikipedia", len(tickers))
-
-        # S&P 400 MidCap
-        sp400_tables = pd.read_html(
-            "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies"
-        )
-        for t in sp400_tables:
-            for candidate_col in ("Ticker symbol", "Symbol", "Ticker"):
-                if candidate_col in t.columns:
-                    sp400 = t[candidate_col].dropna().str.replace(".", "-", regex=False).tolist()
-                    tickers.update(sp400)
-                    logger.info("Fetched %d S&P 400 tickers from Wikipedia", len(sp400))
-                    break
-
+    if fetch_ok and tickers:
         result = sorted(tickers)
-        _CACHE_PATH.parent.mkdir(exist_ok=True)
-        _CACHE_PATH.write_text(json.dumps({
-            "cached_at": datetime.now().isoformat(),
-            "tickers": result,
-        }))
-        logger.info("Universe cached: %d stocks (S&P 500 + S&P 400)", len(result))
+        try:
+            _CACHE_PATH.parent.mkdir(exist_ok=True)
+            _CACHE_PATH.write_text(json.dumps({
+                "cached_at": datetime.now().isoformat(),
+                "tickers": result,
+            }))
+            logger.info("Universe cached: %d stocks (S&P 500 + S&P 400 + S&P 600)", len(result))
+        except Exception as e:
+            logger.warning("Failed to write universe cache: %s", e)
         return result
 
-    except Exception as e:
-        logger.warning("Universe fetch failed (%s) — using hardcoded fallback (%d stocks)",
-                       e, len(STOCK_UNIVERSE))
-        return STOCK_UNIVERSE
+    logger.warning("All Wikipedia fetches failed — using hardcoded fallback (%d stocks)",
+                   len(STOCK_UNIVERSE))
+    return STOCK_UNIVERSE
 
 
 # ── Hardcoded fallback (~457 stocks) ──────────────────────────────────────────
