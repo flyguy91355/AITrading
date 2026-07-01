@@ -53,6 +53,7 @@ class AccountInfo:
     portfolio_value: float
     buying_power: float
     equity: float
+    last_equity: float = 0.0  # equity at previous day's close — used for daily P/L
     day_trade_count: int = 0
     pattern_day_trader: bool = False
 

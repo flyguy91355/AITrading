@@ -48,6 +48,8 @@ class OrderManager:
         try:
             account = await self.broker.get_account()
             self.portfolio.cash = account.cash
+            if account.last_equity > 0:
+                self.portfolio.day_start_value = account.last_equity
 
             positions = await self.broker.get_positions()
             for p in positions:
@@ -122,19 +124,11 @@ class OrderManager:
         self, ticker: str, shares: float,
         stop_price: float, targets: list[float],
     ):
-        """Place stop loss + 3 take-profit limit orders in the broker."""
-        # ── Stop loss (full position) ──
-        if stop_price and stop_price > 0:
-            stop_order = Order(
-                ticker=ticker, side=OrderSide.SELL,
-                order_type=OrderType.STOP,
-                quantity=shares,
-                stop_price=round(stop_price, 2),
-            )
-            stop_result = await self.broker.submit_order(stop_order)
-            self.active_orders[stop_result.broker_order_id] = stop_result
-            self._stop_order_ids[ticker] = stop_result.broker_order_id
-            logger.info("Stop loss placed for %s: %.4g shares @ $%.2f", ticker, shares, stop_price)
+        """Place 3 take-profit limit orders. Stop loss is enforced in software by
+        the position monitor loop — placing a broker stop order alongside 3 TP orders
+        would exceed the position size and get rejected by Alpaca."""
+        # Stop price is stored on the Position object; position_monitor_loop handles it
+        logger.info("Stop loss tracked in software for %s @ $%.2f", ticker, stop_price)
 
         # ── Take-profit limit orders (sell ⅓ at each target) ──
         if targets:
@@ -191,13 +185,7 @@ class OrderManager:
         return result
 
     async def _cancel_exit_orders(self, ticker: str):
-        """Cancel all open stop and take-profit orders for a ticker."""
-        # Cancel stop loss
-        stop_id = self._stop_order_ids.pop(ticker, None)
-        if stop_id:
-            await self.cancel(stop_id)
-
-        # Cancel remaining take-profit orders
+        """Cancel all open take-profit orders for a ticker."""
         for tp in self._tp_orders.pop(ticker, []):
             await self.cancel(tp["order_id"])
 
@@ -240,29 +228,13 @@ class OrderManager:
 
             if shares_sold > 0:
                 pos = self.portfolio.positions.get(ticker)
-                if pos and pos.shares > 0.001:
-                    # Adjust stop loss to cover only remaining shares
-                    old_stop_id = self._stop_order_ids.pop(ticker, None)
-                    if old_stop_id:
-                        await self.cancel(old_stop_id)
-                    stop_order = Order(
-                        ticker=ticker, side=OrderSide.SELL,
-                        order_type=OrderType.STOP,
-                        quantity=round(pos.shares, 9),
-                        stop_price=round(pos.stop_loss, 2),
-                    )
-                    stop_result = await self.broker.submit_order(stop_order)
-                    self.active_orders[stop_result.broker_order_id] = stop_result
-                    self._stop_order_ids[ticker] = stop_result.broker_order_id
-                    logger.info("Stop loss updated for %s: now covers %.4g shares after TP fill",
-                                ticker, pos.shares)
-                elif pos and pos.shares <= 0.001:
+                if pos and pos.shares <= 0.001:
                     # All shares sold via take-profits — position fully closed
-                    old_stop_id = self._stop_order_ids.pop(ticker, None)
-                    if old_stop_id:
-                        await self.cancel(old_stop_id)
                     self.portfolio.close_position(ticker)
                     logger.info("Position %s fully closed via take-profit orders", ticker)
+                elif pos:
+                    logger.info("TP filled for %s — %.4g shares remaining, stop still active at $%.2f",
+                                ticker, pos.shares, pos.stop_loss)
 
     async def update_positions(self):
         if not self.broker:

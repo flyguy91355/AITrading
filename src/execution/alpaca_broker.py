@@ -61,6 +61,7 @@ class AlpacaBroker(Broker):
             portfolio_value=float(account.portfolio_value),
             buying_power=float(account.buying_power),
             equity=float(account.equity),
+            last_equity=float(account.last_equity),
             day_trade_count=int(account.daytrade_count),
             pattern_day_trader=account.pattern_day_trader,
         )

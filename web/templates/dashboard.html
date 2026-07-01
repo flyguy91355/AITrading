@@ -831,6 +831,13 @@ function handleMessage(msg) {
       if (msg.max_positions) document.getElementById('maxPosInput').value = msg.max_positions;
       break;
 
+    case 'stocks_update':
+      allStocks = msg.stocks;
+      renderStockGrid(allStocks);
+      // Re-apply stored signal indicators — renderStockGrid resets the DOM
+      Object.values(tickerSignals).forEach(b => updateTickerSignal(b));
+      break;
+
     case 'portfolio':
       heldTickers = new Set((msg.portfolio.positions || []).map(p => p.ticker));
       updatePortfolio(msg.portfolio);
@@ -1332,10 +1339,9 @@ const LIVE_FEED_PHASES = new Set([
   'AUTO_TRADE', 'WATCHLIST', 'RISK', 'TAKE_PROFIT', 'ROTATION',
   'SYSTEM', 'ERROR',
 ]);
-// Universe scan: only show when a stock actually gets added (buy/success level)
 function liveFeedWants(entry) {
   if (LIVE_FEED_PHASES.has(entry.phase)) return true;
-  if (entry.phase === 'UNIVERSE SCAN' && (entry.level === 'buy' || entry.level === 'success')) return true;
+  if (entry.phase === 'UNIVERSE SCAN') return true;
   return false;
 }
 

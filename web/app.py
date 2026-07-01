@@ -1159,6 +1159,8 @@ class DashboardState:
                     f"Added to watchlist (replaced bought position) — "
                     f"{report.signal.value} conviction {report.conviction_score}/10", "buy")
                 await self.broadcast({"type": "ai_log", "entry": entry})
+                await self.broadcast({"type": "stocks_update",
+                                      "stocks": self.watchlist_manager.get_active()})
                 logger.info("Watchlist slot filled by %s after buy", ticker)
                 return
             await asyncio.sleep(self.stock_delay)
@@ -1190,6 +1192,8 @@ class DashboardState:
         await self.broadcast({"type": "ai_log", "entry": entry})
 
         filled = 0
+        screened_out = 0
+        analyzed = 0
         held_tickers = set(self.portfolio.positions.keys())
         available = [t for t in self.watchlist_manager.available_from_universe(STOCK_UNIVERSE)
                      if t not in held_tickers]
@@ -1219,19 +1223,24 @@ class DashboardState:
                 "index": scanned_count,
                 "total": total_available,
                 "cycle": self.cycle_count,
-                "label": f"Universe scan — seeking {slots - filled} slot(s)",
+                "label": f"Universe scan — {slots - filled} slot(s) | {analyzed} analyzed, {screened_out} skipped",
             }})
 
             # Quick screen first — 2s vs 25s; skip Claude analysis for obvious non-candidates
             passes, reason = await asyncio.get_event_loop().run_in_executor(
                 None, quick_screen, ticker)
             if not passes:
+                screened_out += 1
                 logger.debug("Quick screen rejected %s: %s", ticker, reason)
+                entry = self.add_ai_log(ticker, "UNIVERSE SCAN",
+                    f"Screened out — {reason}", "neutral")
+                await self.broadcast({"type": "ai_log", "entry": entry})
                 if ticker in STOCK_UNIVERSE:
                     self.watchlist_manager.set_scan_cursor(
                         (STOCK_UNIVERSE.index(ticker) + 1) % len(STOCK_UNIVERSE))
                 await asyncio.sleep(0.5)
                 continue
+            analyzed += 1
 
             try:
                 report = await self.research_engine.analyze_stock(ticker)
@@ -1252,6 +1261,8 @@ class DashboardState:
                     f"Added to watchlist — {report.signal.value} conviction {report.conviction_score}/10",
                     "buy")
                 await self.broadcast({"type": "ai_log", "entry": entry})
+                await self.broadcast({"type": "stocks_update",
+                                      "stocks": self.watchlist_manager.get_active()})
                 logger.info("Replacement: added %s (%s, conviction %d)",
                             ticker, report.signal.value, report.conviction_score)
 
