@@ -31,7 +31,7 @@ from src.execution.order_manager import OrderManager
 from src.execution.broker import OrderSide, OrderType, OrderStatus, Order
 from src.reporting.trade_logger import TradeLogger
 from src.utils.watchlist_manager import WatchlistManager
-from src.data.stock_universe import STOCK_UNIVERSE
+from src.data.stock_universe import get_universe, STOCK_UNIVERSE as _FALLBACK_UNIVERSE
 
 logging.basicConfig(
     level=logging.INFO,
@@ -44,6 +44,9 @@ app = FastAPI(title="AITrading Dashboard")
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 
 INTER_STOCK_DELAY = 3
+
+# Load universe at startup (S&P 500 + S&P 400 from Wikipedia, falls back to hardcoded)
+STOCK_UNIVERSE: list[str] = get_universe()
 
 
 class DashboardState:
@@ -1040,6 +1043,9 @@ class DashboardState:
                 continue
 
             if not self._is_market_open():
+                if _market_was_open:
+                    # Market just closed — kick off nightly batch scan in background
+                    asyncio.create_task(self._run_nightly_batch())
                 _market_was_open = False
                 wait_secs, next_label = self._seconds_until_next_scan()
                 self.next_cycle_at = next_label
@@ -1195,9 +1201,39 @@ class DashboardState:
         screened_out = 0
         analyzed = 0
         held_tickers = set(self.portfolio.positions.keys())
+        min_conviction = self.config.get("research", {}).get("min_conviction_score", 7)
+
+        # ── Try nightly batch candidates first (instant, no Claude call) ──────
+        batch_candidates = self.watchlist_manager.get_candidates(
+            limit=slots, exclude=held_tickers)
+        for cand in batch_candidates:
+            if filled >= slots:
+                break
+            ticker = cand["ticker"]
+            self.watchlist_manager.add(ticker, cand["company_name"], "")
+            self.watchlist_manager.remove_candidate(ticker)
+            filled += 1
+            entry = self.add_ai_log(ticker, "WATCHLIST",
+                f"Added from nightly batch — {cand['signal']} conviction {cand['conviction_score']}/10",
+                "buy")
+            await self.broadcast({"type": "ai_log", "entry": entry})
+            await self.broadcast({"type": "stocks_update",
+                                  "stocks": self.watchlist_manager.get_active()})
+            logger.info("Slot filled from batch candidates: %s (%s, conviction %d)",
+                        ticker, cand["signal"], cand["conviction_score"])
+
+        if filled >= slots:
+            logger.info("All %d slots filled from nightly batch candidates — no real-time scan needed", slots)
+            entry = self.add_ai_log("SYSTEM", "WATCHLIST",
+                f"All {slots} slot(s) filled from last night's pre-screened candidates. "
+                f"Watchlist: {self.watchlist_manager.size()} stocks.", "success")
+            await self.broadcast({"type": "ai_log", "entry": entry})
+            return
+
+        # Remaining slots need real-time scanning
+        slots = self.watchlist_manager.slots_available()
         available = [t for t in self.watchlist_manager.available_from_universe(STOCK_UNIVERSE)
                      if t not in held_tickers]
-        min_conviction = self.config.get("research", {}).get("min_conviction_score", 7)
         last_scanned = None
 
         total_available = len(available)
@@ -1288,6 +1324,38 @@ class DashboardState:
             f"Universe scan complete — {filled}/{slots} slots filled. "
             f"Watchlist: {self.watchlist_manager.size()} stocks.", "success")
         await self.broadcast({"type": "ai_log", "entry": entry})
+
+    async def _run_nightly_batch(self):
+        """Run the Anthropic Batch API universe screen after market close."""
+        from src.research.batch_screener import run_nightly_batch
+        api_key = os.getenv("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            logger.warning("No Anthropic API key — nightly batch scan skipped")
+            return
+        n_universe = len(STOCK_UNIVERSE)
+        entry = self.add_ai_log("SYSTEM", "BATCH SCAN",
+            f"Nightly batch scan starting — {n_universe} stocks to screen (results in ~30-60 min)",
+            "neutral")
+        await self.broadcast({"type": "ai_log", "entry": entry})
+        try:
+            batch_id = await run_nightly_batch(
+                universe=STOCK_UNIVERSE,
+                watchlist_manager=self.watchlist_manager,
+                api_key=api_key,
+            )
+            n = self.watchlist_manager.candidate_count()
+            if batch_id:
+                msg = f"Batch complete (id: {batch_id}) — {n} buy candidates ready for tomorrow"
+                level = "success"
+            else:
+                msg = "Nightly batch produced no candidates — real-time scan will run at open"
+                level = "warning"
+            entry = self.add_ai_log("SYSTEM", "BATCH SCAN", msg, level)
+            await self.broadcast({"type": "ai_log", "entry": entry})
+        except Exception as e:
+            logger.error("Nightly batch scan failed: %s", e)
+            entry = self.add_ai_log("SYSTEM", "BATCH SCAN", f"Nightly batch failed: {e}", "error")
+            await self.broadcast({"type": "ai_log", "entry": entry})
 
     async def run_forced_scan(self):
         """Run a full scan cycle regardless of market hours."""

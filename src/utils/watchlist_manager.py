@@ -38,7 +38,77 @@ class WatchlistManager:
                     value TEXT
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS candidates (
+                    ticker TEXT PRIMARY KEY,
+                    company_name TEXT,
+                    signal TEXT,
+                    conviction_score INTEGER,
+                    entry_price REAL,
+                    stop_loss REAL,
+                    take_profit_targets TEXT,
+                    screened_at TEXT,
+                    batch_id TEXT
+                )
+            """)
             conn.commit()
+
+    # ── Candidates (batch pre-screened stocks) ─────────────────────────────
+
+    def add_candidate(self, ticker: str, company_name: str, signal: str,
+                      conviction: int, entry_price: float, stop_loss: float,
+                      take_profit_targets: list, batch_id: str = ""):
+        import json as _json
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO candidates
+                (ticker, company_name, signal, conviction_score, entry_price,
+                 stop_loss, take_profit_targets, screened_at, batch_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (ticker, company_name, signal, conviction, entry_price,
+                  stop_loss, _json.dumps(take_profit_targets), now, batch_id))
+            conn.commit()
+
+    def get_candidates(self, limit: int = 20, exclude: set | None = None) -> list[dict]:
+        """Return top candidates by conviction, excluding held/watchlist tickers."""
+        import json as _json
+        exclude = exclude or set()
+        exclude |= self.get_active_tickers()
+        with self._connect() as conn:
+            rows = conn.execute("""
+                SELECT ticker, company_name, signal, conviction_score,
+                       entry_price, stop_loss, take_profit_targets, screened_at
+                FROM candidates
+                WHERE ticker NOT IN ({})
+                ORDER BY conviction_score DESC, screened_at DESC
+                LIMIT ?
+            """.format(",".join("?" * len(exclude)) if exclude else "SELECT NULL"),
+            (*exclude, limit) if exclude else (limit,)).fetchall()
+        return [
+            {
+                "ticker": r[0], "company_name": r[1], "signal": r[2],
+                "conviction_score": r[3], "entry_price": r[4],
+                "stop_loss": r[5],
+                "take_profit_targets": _json.loads(r[6]) if r[6] else [],
+                "screened_at": r[7],
+            }
+            for r in rows
+        ]
+
+    def remove_candidate(self, ticker: str):
+        with self._connect() as conn:
+            conn.execute("DELETE FROM candidates WHERE ticker = ?", (ticker,))
+            conn.commit()
+
+    def clear_candidates(self):
+        with self._connect() as conn:
+            conn.execute("DELETE FROM candidates")
+            conn.commit()
+
+    def candidate_count(self) -> int:
+        with self._connect() as conn:
+            return conn.execute("SELECT COUNT(*) FROM candidates").fetchone()[0]
 
     def get_scan_cursor(self) -> int:
         """Position in the universe list where the next replacement scan should resume."""

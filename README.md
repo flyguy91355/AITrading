@@ -4,7 +4,7 @@ AI-Powered Stock Research & Autonomous Trading System that uses Claude AI to ana
 
 ## What It Does
 
-AITrading maintains a **dynamic watchlist of 50 stocks**, scans them at strategic times during market hours, runs each through a multi-dimensional research pipeline, and autonomously buys/sells based on high-conviction signals. The watchlist is self-managing — it starts empty, begins filling at market open, and continuously replaces underperformers with better candidates from the S&P 500 universe throughout the day.
+AITrading maintains a **dynamic watchlist of 50 stocks**, scans them at strategic times during market hours, runs each through a multi-dimensional research pipeline, and autonomously buys/sells based on high-conviction signals. The watchlist is self-managing — it starts empty, begins filling at market open, and continuously replaces underperformers with better candidates from a ~900-stock universe (S&P 500 + S&P 400 MidCap).
 
 It's designed around one principle: **never lose money** — every trade requires strong conviction, favorable risk/reward, and mandatory stop losses.
 
@@ -76,10 +76,19 @@ The 50-stock watchlist is **self-managing** — it starts empty and stays popula
 - After every scan, each stock's signal (BUY, HOLD, SELL, etc.) is recorded
 - **2 consecutive HOLD or SELL signals** marks a stock as an underperformer
 
+### Nightly Batch Pre-Screen
+
+Every evening after market close, the system runs a **nightly batch screen** using Anthropic's Message Batches API:
+
+1. Quick-screens the full ~900-stock universe via yfinance (free, ~2s/stock)
+2. Submits all stocks that pass to Anthropic in a single batch request (50% cheaper than real-time)
+3. Results arrive in 15–60 minutes and are stored in a **candidates table** in SQLite
+
 ### Filling Open Slots
 
-- At market open, a fill scan immediately begins scanning the S&P 500 universe for BUY/STRONG BUY stocks (conviction ≥ 7) to populate any open slots
-- The same fill scan runs after each of the 3 daily scans as well
+At market open (and after each daily scan), the system first checks the candidates table:
+- **From last night's batch** (instant — no API call): pulls the highest-conviction pre-screened stocks first
+- **Real-time scan fallback**: if the candidates table is empty or doesn't cover all open slots, falls back to live quick-screen + Claude analysis
 - A **two-pass quick screen** filters stocks in ~2 seconds before committing to a full 25-second Claude analysis:
   - Rejects downtrends (price below 50-day MA), extreme RSI, weak momentum, and low volume
   - Only candidates that pass go to full Claude analysis — roughly 4–5x faster than scanning every stock
@@ -92,7 +101,7 @@ The 50-stock watchlist is **self-managing** — it starts empty and stays popula
 
 ### Universe Scan Cursor
 
-The scan cycles through the full S&P 500 before repeating — a persistent cursor in the database ensures every stock gets evaluated before the list wraps around. The cursor is saved after each stock so market-close interruptions resume exactly where they left off.
+The real-time scan cycles through the full universe before repeating — a persistent cursor in the database ensures every stock gets evaluated before the list wraps around. The cursor is saved after each stock so market-close interruptions resume exactly where they left off.
 
 ---
 
@@ -128,7 +137,8 @@ src/
     market_data.py       Real-time quotes, financials, technicals (Yahoo Finance, Alpha Vantage)
     insider_tracker.py   SEC Form 4 insider transaction tracking (Finnhub)
     news_feed.py         News aggregation (NewsAPI, Finnhub)
-    stock_universe.py    S&P 500 universe used for watchlist replacement scanning
+    stock_universe.py    S&P 500 + S&P 400 MidCap universe (~900 stocks), Wikipedia-fetched with 24h cache
+    batch_screener.py    Nightly Anthropic Batch API universe pre-screen (50% cheaper, async)
 
   research/
     engine.py            Claude AI synthesis — produces conviction scores and trade signals
@@ -136,7 +146,7 @@ src/
     sentiment.py         News sentiment analysis
     insider_analysis.py  Insider activity scoring
     competitor.py        Competitive moat assessment
-    quick_screen.py      Fast yfinance-only pre-filter — rejects non-candidates in ~2s
+    quick_screen.py      Fast yfinance-only pre-filter — rejects non-candidates in ~2s (used by both batch and real-time)
 
   decision/
     signal_generator.py  Converts research reports into actionable trade signals
