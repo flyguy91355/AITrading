@@ -1121,7 +1121,9 @@ class DashboardState:
     async def _replace_one_watchlist_slot(self):
         """Find one BUY/STRONG BUY from the universe to fill a freed watchlist slot."""
         min_conviction = self.config.get("research", {}).get("min_conviction_score", 7)
-        available = self.watchlist_manager.available_from_universe(STOCK_UNIVERSE)
+        held_tickers = set(self.portfolio.positions.keys())
+        available = [t for t in self.watchlist_manager.available_from_universe(STOCK_UNIVERSE)
+                     if t not in held_tickers]
         for ticker in available:
             try:
                 report = await self.research_engine.analyze_stock(ticker)
@@ -1168,7 +1170,9 @@ class DashboardState:
         await self.broadcast({"type": "ai_log", "entry": entry})
 
         filled = 0
-        available = self.watchlist_manager.available_from_universe(STOCK_UNIVERSE)
+        held_tickers = set(self.portfolio.positions.keys())
+        available = [t for t in self.watchlist_manager.available_from_universe(STOCK_UNIVERSE)
+                     if t not in held_tickers]
         min_conviction = self.config.get("research", {}).get("min_conviction_score", 7)
         last_scanned = None
 
