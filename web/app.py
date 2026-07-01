@@ -1332,26 +1332,18 @@ class DashboardState:
         if not api_key:
             logger.warning("No Anthropic API key — nightly batch scan skipped")
             return
-        n_universe = len(STOCK_UNIVERSE)
-        entry = self.add_ai_log("SYSTEM", "BATCH SCAN",
-            f"Nightly batch scan starting — {n_universe} stocks to screen (results in ~30-60 min)",
-            "neutral")
-        await self.broadcast({"type": "ai_log", "entry": entry})
+
+        async def _progress(msg: str, level: str = "neutral"):
+            entry = self.add_ai_log("SYSTEM", "BATCH SCAN", msg, level)
+            await self.broadcast({"type": "ai_log", "entry": entry})
+
         try:
-            batch_id = await run_nightly_batch(
+            await run_nightly_batch(
                 universe=STOCK_UNIVERSE,
                 watchlist_manager=self.watchlist_manager,
                 api_key=api_key,
+                progress_cb=_progress,
             )
-            n = self.watchlist_manager.candidate_count()
-            if batch_id:
-                msg = f"Batch complete (id: {batch_id}) — {n} buy candidates ready for tomorrow"
-                level = "success"
-            else:
-                msg = "Nightly batch produced no candidates — real-time scan will run at open"
-                level = "warning"
-            entry = self.add_ai_log("SYSTEM", "BATCH SCAN", msg, level)
-            await self.broadcast({"type": "ai_log", "entry": entry})
         except Exception as e:
             logger.error("Nightly batch scan failed: %s", e)
             entry = self.add_ai_log("SYSTEM", "BATCH SCAN", f"Nightly batch failed: {e}", "error")
@@ -1479,6 +1471,19 @@ async def get_reports():
 @app.get("/api/buy-candidates")
 async def get_buy_candidates():
     return state.buy_candidates
+
+
+@app.post("/api/trigger-batch-scan")
+async def trigger_batch_scan():
+    """Manually kick off the nightly batch scan (e.g. right after market close)."""
+    asyncio.create_task(state._run_nightly_batch())
+    return {"status": "started", "message": "Nightly batch scan launched — watch Live Activity for progress"}
+
+
+@app.get("/api/candidates")
+async def get_candidates():
+    """Return the current pre-screened batch candidates."""
+    return state.watchlist_manager.get_candidates(limit=100)
 
 
 @app.get("/api/broker-status")
