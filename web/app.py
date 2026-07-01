@@ -23,6 +23,7 @@ from src.research.fundamental import FundamentalAnalyzer
 from src.research.sentiment import SentimentAnalyzer
 from src.research.insider_analysis import InsiderAnalyzer
 from src.research.competitor import CompetitorAnalyzer
+from src.research.quick_screen import quick_screen
 from src.decision.signal_generator import SignalGenerator
 from src.decision.risk_manager import RiskManager
 from src.decision.portfolio import Portfolio
@@ -322,6 +323,7 @@ class DashboardState:
         # Track tickers ordered this scan so pending (unfilled) orders count against the limit
         pending_tickers: set[str] = set()
         pending_cash_reserved: float = 0.0
+        rotated_out: set[str] = set()  # tickers already sold for rotation this cycle
 
         for candidate in confirmed:
             ticker = candidate["ticker"]
@@ -332,9 +334,9 @@ class DashboardState:
             if ticker in self.portfolio.positions or ticker in pending_tickers:
                 continue
 
-            current_count = len(self.portfolio.positions) + len(pending_tickers)
+            current_count = len(self.portfolio.positions) + len(pending_tickers) - len(rotated_out)
             if current_count >= max_positions:
-                swapped = await self._try_rotation_swap(candidate)
+                swapped = await self._try_rotation_swap(candidate, rotated_out)
                 if not swapped:
                     entry = self.add_ai_log(ticker, "AUTO_TRADE",
                         f"Portfolio full ({max_positions} positions) — no weaker holding to swap", "warning")
@@ -390,15 +392,22 @@ class DashboardState:
 
         return conviction + (pos.unrealized_pnl_pct / 10)
 
-    async def _try_rotation_swap(self, new_candidate: dict) -> bool:
+    async def _try_rotation_swap(self, new_candidate: dict, rotated_out: set | None = None) -> bool:
         """Sell weakest holding if new candidate scores higher. Returns True if swap happened."""
         from src.decision.signal_generator import TradeSignal
         from src.research.engine import Signal as Sig
 
-        ranked = sorted(
-            self.portfolio.positions.keys(),
-            key=lambda t: self._rank_position(t),
-        )
+        today = self._now_et().date()
+        already_sold = rotated_out or set()
+
+        # Only consider positions not already rotated out this cycle and not bought today
+        eligible = [
+            t for t in self.portfolio.positions
+            if t not in already_sold
+            and self.portfolio.positions[t].opened_at.date() != today
+        ]
+
+        ranked = sorted(eligible, key=lambda t: self._rank_position(t))
 
         if not ranked:
             return False
@@ -452,6 +461,8 @@ class DashboardState:
                 await self.broadcast({"type": "ai_log", "entry": entry})
                 logger.info("Rotation: sold %s (score %.1f) to make room for %s (score %.1f)",
                             weakest_ticker, weakest_score, new_candidate["ticker"], new_score)
+                if rotated_out is not None:
+                    rotated_out.add(weakest_ticker)
                 return True
         except Exception as e:
             entry = self.add_ai_log(weakest_ticker, "ERROR", f"Rotation sell failed: {e}", "error")
@@ -1125,6 +1136,15 @@ class DashboardState:
         available = [t for t in self.watchlist_manager.available_from_universe(STOCK_UNIVERSE)
                      if t not in held_tickers]
         for ticker in available:
+            passes, reason = await asyncio.get_event_loop().run_in_executor(
+                None, quick_screen, ticker)
+            if not passes:
+                logger.debug("Quick screen rejected %s: %s", ticker, reason)
+                if ticker in STOCK_UNIVERSE:
+                    self.watchlist_manager.set_scan_cursor(
+                        (STOCK_UNIVERSE.index(ticker) + 1) % len(STOCK_UNIVERSE))
+                await asyncio.sleep(0.5)
+                continue
             try:
                 report = await self.research_engine.analyze_stock(ticker)
             except Exception:
@@ -1201,6 +1221,17 @@ class DashboardState:
                 "cycle": self.cycle_count,
                 "label": f"Universe scan — seeking {slots - filled} slot(s)",
             }})
+
+            # Quick screen first — 2s vs 25s; skip Claude analysis for obvious non-candidates
+            passes, reason = await asyncio.get_event_loop().run_in_executor(
+                None, quick_screen, ticker)
+            if not passes:
+                logger.debug("Quick screen rejected %s: %s", ticker, reason)
+                if ticker in STOCK_UNIVERSE:
+                    self.watchlist_manager.set_scan_cursor(
+                        (STOCK_UNIVERSE.index(ticker) + 1) % len(STOCK_UNIVERSE))
+                await asyncio.sleep(0.5)
+                continue
 
             try:
                 report = await self.research_engine.analyze_stock(ticker)
