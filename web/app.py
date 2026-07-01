@@ -1021,12 +1021,15 @@ class DashboardState:
         logger.info("Auto-scan loop started — %d scans/day at %s ET",
                     self.scans_per_day, ", ".join(scan_labels))
 
+        _market_was_open = False
+
         while True:
             if self.paused:
                 await asyncio.sleep(5)
                 continue
 
             if not self._is_market_open():
+                _market_was_open = False
                 wait_secs, next_label = self._seconds_until_next_scan()
                 self.next_cycle_at = next_label
                 await self.broadcast({
@@ -1037,6 +1040,15 @@ class DashboardState:
                             next_label, wait_secs / 60)
                 await asyncio.sleep(min(wait_secs, 60))
                 continue
+
+            # Market just opened — kick off replacement scan immediately if slots available
+            if not _market_was_open:
+                _market_was_open = True
+                if (self.config.get("research", {}).get("replacement_scan_eod", True)
+                        and self.watchlist_manager.slots_available() > 0):
+                    logger.info("Market open — starting fill scan (%d open slots)",
+                                self.watchlist_manager.slots_available())
+                    asyncio.create_task(self.run_replacement_scan())
 
             wait_secs, next_label = self._seconds_until_next_scan()
             if wait_secs > 30:
@@ -1140,8 +1152,8 @@ class DashboardState:
         for ticker in held_in_watchlist:
             self.watchlist_manager.remove(ticker)
 
-        if not underperformers and not held_in_watchlist:
-            logger.info("End-of-day replacement scan: watchlist is clean — no changes needed")
+        if not underperformers and not held_in_watchlist and self.watchlist_manager.slots_available() == 0:
+            logger.info("End-of-day replacement scan: watchlist is full and clean — no changes needed")
             return
 
         for ticker in underperformers:
@@ -1449,6 +1461,14 @@ async def startup():
     Path("data").mkdir(exist_ok=True)
     await state.portfolio.initialize()
     await state.connect_broker()
+
+    # Remove any watchlist stocks already held as positions — they don't need a slot
+    held = set(state.portfolio.positions.keys())
+    for ticker in held:
+        if ticker in state.watchlist_manager.get_active_tickers():
+            state.watchlist_manager.remove(ticker)
+            logger.info("Startup cleanup: removed held position %s from watchlist", ticker)
+
     asyncio.create_task(state.auto_scan_loop())
     asyncio.create_task(state.position_update_loop())
     asyncio.create_task(state.position_monitor_loop())
