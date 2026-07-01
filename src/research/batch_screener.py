@@ -223,8 +223,21 @@ async def run_nightly_batch(
             await _progress(f"Batch poll error: {e}", "warning")
 
     # ── Step 5: Process results and store candidates ───────────────────────
+    def _parse_result(text: str) -> dict:
+        """Strip markdown code fences then parse JSON."""
+        import re
+        text = text.strip()
+        text = re.sub(r"^```[a-z]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text.strip())
+        return json.loads(text.strip())
+
+    # Batch pre-screen uses a lower threshold (6) because we have limited data;
+    # the full real-time analysis still requires 7 before any actual buy.
+    batch_min_conviction = max(min_conviction - 1, 6)
+
     watchlist_manager.clear_candidates()
     added = 0
+    parse_errors = 0
     try:
         results = await asyncio.to_thread(
             client.beta.messages.batches.results, batch_id)
@@ -234,10 +247,10 @@ async def run_nightly_batch(
             ticker = result.custom_id
             try:
                 raw = result.result.message.content[0].text
-                data = json.loads(raw)
+                data = _parse_result(raw)
                 signal = data.get("signal", "")
                 conviction = int(data.get("conviction_score", 0))
-                if signal in ("BUY", "STRONG BUY") and conviction >= min_conviction:
+                if signal in ("BUY", "STRONG BUY") and conviction >= batch_min_conviction:
                     targets = [float(t) for t in (data.get("take_profit_targets") or [])
                                if t is not None]
                     watchlist_manager.add_candidate(
@@ -252,9 +265,13 @@ async def run_nightly_batch(
                     )
                     added += 1
             except Exception as e:
+                parse_errors += 1
                 logger.debug("Result parse error for %s: %s", ticker, e)
     except Exception as e:
         await _progress(f"Batch result retrieval failed: {e}", "error")
+
+    if parse_errors:
+        logger.warning("Batch parse errors: %d/%d results skipped", parse_errors, len(batch_requests))
 
     await _progress(
         f"Nightly batch complete — {added} buy candidates stored "
