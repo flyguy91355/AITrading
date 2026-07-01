@@ -71,30 +71,35 @@ class WatchlistManager:
             conn.commit()
 
     def get_candidates(self, limit: int = 20, exclude: set | None = None) -> list[dict]:
-        """Return top candidates by conviction, excluding held/watchlist tickers."""
+        """Return top candidates sorted by conviction then risk/reward ratio."""
         import json as _json
         exclude = exclude or set()
         exclude |= self.get_active_tickers()
+        placeholders = ",".join("?" * len(exclude)) if exclude else "NULL"
         with self._connect() as conn:
-            rows = conn.execute("""
+            rows = conn.execute(f"""
                 SELECT ticker, company_name, signal, conviction_score,
                        entry_price, stop_loss, take_profit_targets, screened_at
                 FROM candidates
-                WHERE ticker NOT IN ({})
-                ORDER BY conviction_score DESC, screened_at DESC
-                LIMIT ?
-            """.format(",".join("?" * len(exclude)) if exclude else "SELECT NULL"),
-            (*exclude, limit) if exclude else (limit,)).fetchall()
-        return [
-            {
+                WHERE ticker NOT IN ({placeholders})
+            """, tuple(exclude) if exclude else ()).fetchall()
+
+        results = []
+        for r in rows:
+            targets = _json.loads(r[6]) if r[6] else []
+            entry, stop = r[4], r[5]
+            t3 = targets[2] if len(targets) >= 3 else (targets[-1] if targets else 0)
+            risk = entry - stop
+            rr = (t3 - entry) / risk if risk > 0 else 0.0
+            results.append({
                 "ticker": r[0], "company_name": r[1], "signal": r[2],
-                "conviction_score": r[3], "entry_price": r[4],
-                "stop_loss": r[5],
-                "take_profit_targets": _json.loads(r[6]) if r[6] else [],
-                "screened_at": r[7],
-            }
-            for r in rows
-        ]
+                "conviction_score": r[3], "entry_price": entry,
+                "stop_loss": stop, "take_profit_targets": targets,
+                "screened_at": r[7], "rr_ratio": round(rr, 2),
+            })
+
+        results.sort(key=lambda x: (-x["conviction_score"], -x["rr_ratio"]))
+        return results[:limit]
 
     def remove_candidate(self, ticker: str):
         with self._connect() as conn:
