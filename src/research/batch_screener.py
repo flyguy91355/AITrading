@@ -231,9 +231,7 @@ async def run_nightly_batch(
         text = re.sub(r"\s*```$", "", text.strip())
         return json.loads(text.strip())
 
-    # Batch pre-screen uses a lower threshold (6) because we have limited data;
-    # the full real-time analysis still requires 7 before any actual buy.
-    batch_min_conviction = max(min_conviction - 1, 6)
+    batch_min_conviction = min_conviction  # same threshold as real-time — no point storing maybes
 
     watchlist_manager.clear_candidates()
     added = 0
