@@ -4,7 +4,7 @@ AI-Powered Stock Research & Autonomous Trading System that uses Claude AI to ana
 
 ## What It Does
 
-AITrading maintains a **dynamic watchlist of 50 stocks**, scans them at strategic times during market hours, runs each through a multi-dimensional research pipeline, and autonomously buys/sells based on high-conviction signals. The watchlist is self-managing — underperformers are automatically replaced each evening with better candidates from the S&P 500 universe.
+AITrading maintains a **dynamic watchlist of 50 stocks**, scans them at strategic times during market hours, runs each through a multi-dimensional research pipeline, and autonomously buys/sells based on high-conviction signals. The watchlist is self-managing — it starts empty, begins filling at market open, and continuously replaces underperformers with better candidates from the S&P 500 universe throughout the day.
 
 It's designed around one principle: **never lose money** — every trade requires strong conviction, favorable risk/reward, and mandatory stop losses.
 
@@ -30,22 +30,27 @@ All five dimensions feed into **Claude AI** (Haiku 4.5), which synthesizes them 
 - Minimum risk/reward ratio: **2.1:1** (measured against T3, the full upside target)
 - Maximum **2%** portfolio risk per trade
 - Maximum **7%** of portfolio in any single position
-- **30%** minimum cash reserve at all times (temporarily 10% during position rebalancing)
+- **10%** minimum cash reserve (raised to 30% once positions rebalance to 7% sizing)
 - Maximum **10 positions** open simultaneously
 - Maximum **3 positions** per sector
 - **Stop losses are mandatory** on every position
 - Trailing stops activate automatically at +5% P&L
-- **Market orders** used for all buys — no limit orders that expire unfilled
+- **Notional (dollar-based) orders** used for all buys — ensures fractional shares and exact position sizing
 
 ### Take-Profit Strategy (Staged Exits)
 
-Each position has three price targets. The system sells in thirds:
+Each position has three GTC limit orders placed in the broker at buy time. The system sells in thirds as each target is hit:
 
 | Stage | Target | Action |
 |-------|--------|--------|
-| T1 | ~+8–12% | Sell ⅓ of position |
-| T2 | ~+15–20% | Sell ⅓ of position |
-| T3 | ~+25–35% | Sell final ⅓ |
+| T1 | ~+4–6% | Sell ⅓ of position |
+| T2 | ~+8–12% | Sell ⅓ of position |
+| T3 | ~+15–20% | Sell final ⅓ |
+
+Orders are placed **sequentially** to comply with Alpaca's position-size constraint:
+- At buy: stop covers ⅔ of shares + TP1 covers ⅓ = 100%
+- After TP1 fills: stop updated to cover ⅓ + TP2 placed for ⅓
+- After TP2 fills: stop cancelled + TP3 placed for final ⅓
 
 ---
 
@@ -63,7 +68,7 @@ The system runs **3 full scans per day** at strategic times (all Eastern):
 
 ## Dynamic Watchlist
 
-The 50-stock watchlist is **self-managing** — it automatically stays populated with high-quality BUY candidates.
+The 50-stock watchlist is **self-managing** — it starts empty and stays populated with high-quality BUY candidates organically through scanning.
 
 ### How It Works
 
@@ -71,18 +76,23 @@ The 50-stock watchlist is **self-managing** — it automatically stays populated
 - After every scan, each stock's signal (BUY, HOLD, SELL, etc.) is recorded
 - **2 consecutive HOLD or SELL signals** marks a stock as an underperformer
 
-### End-of-Day Replacement (after 3:30 PM scan)
+### Filling Open Slots
 
-1. All underperformers are evicted from the watchlist
-2. The system scans the **S&P 500 universe** (~500 stocks) until it finds enough BUY/STRONG BUY replacements (conviction ≥ 7) to fill all open slots
-3. Scanning stops as soon as all slots are filled — no wasted API calls
+- At market open, a fill scan immediately begins scanning the S&P 500 universe for BUY/STRONG BUY stocks (conviction ≥ 7) to populate any open slots
+- The same fill scan runs after each of the 3 daily scans as well
+- A **two-pass quick screen** filters stocks in ~2 seconds before committing to a full 25-second Claude analysis:
+  - Rejects downtrends (price below 50-day MA), extreme RSI, weak momentum, and low volume
+  - Only candidates that pass go to full Claude analysis — roughly 4–5x faster than scanning every stock
 
 ### When a Stock Gets Bought
 
 - It's **immediately removed from the watchlist** — held positions are already monitored hourly, so the slot is freed for a new candidate
-- A background scan finds one replacement from the universe straight away
+- The system scans for one replacement from the universe right away
+- Held positions are also excluded from universe scan candidates — the system never re-adds a stock you already own
 
-This keeps the watchlist focused on finding new opportunities rather than tracking stocks you already own.
+### Universe Scan Cursor
+
+The scan cycles through the full S&P 500 before repeating — a persistent cursor in the database ensures every stock gets evaluated before the list wraps around. The cursor is saved after each stock so market-close interruptions resume exactly where they left off.
 
 ---
 
@@ -94,6 +104,7 @@ Held stocks get continuous attention separate from the watchlist:
 - **Every 30 seconds** — Price updates, stop-loss checks, trailing stop adjustments
 - **Automatic sells** when conviction drops to 4/10 or below
 - **Portfolio rotation** — weakest holdings are swapped for stronger candidates when portfolio is full
+- **Same-day protection** — positions bought today are never rotated out; must hold at least one full day
 
 ---
 
@@ -103,7 +114,8 @@ Held stocks get continuous attention separate from the watchlist:
 - **Drawdown protection**: Defensive mode at 5%, halt at 10%, full exit review at 15%
 - **Max positions enforced in real time**: Pending (unfilled) orders count against the limit immediately, preventing over-allocation during after-hours order queuing
 - **Cash reserve check**: Accounts for all pending orders in the same scan cycle before placing the next one
-- **Staged take-profits**: Sells ⅓ of position at each of three profit targets
+- **Staged take-profits**: Sells ⅓ of position at each of three profit targets via real Alpaca GTC limit orders
+- **Hardware stop losses**: Alpaca stop orders protect the broker side — if the server goes down, stops still fire
 - **Trailing stops**: Automatically ratchet upward as positions gain
 
 ---
@@ -124,6 +136,7 @@ src/
     sentiment.py         News sentiment analysis
     insider_analysis.py  Insider activity scoring
     competitor.py        Competitive moat assessment
+    quick_screen.py      Fast yfinance-only pre-filter — rejects non-candidates in ~2s
 
   decision/
     signal_generator.py  Converts research reports into actionable trade signals
@@ -132,20 +145,19 @@ src/
 
   execution/
     alpaca_broker.py     Alpaca API integration (paper + live)
-    order_manager.py     Order lifecycle, stop-loss placement, position sync
+    order_manager.py     Order lifecycle, sequential TP/stop placement, position sync
     robinhood_broker.py  Robinhood (planned)
 
   reporting/
     trade_logger.py      Trade history to SQLite
-    dashboard.py         Alerts and notifications
 
   utils/
     config.py            Settings and credential loader
-    watchlist_manager.py Dynamic watchlist — DB-backed, tracks signal history, manages evictions
+    watchlist_manager.py Dynamic watchlist — DB-backed, tracks signal history, manages evictions and scan cursor
 
 web/
   app.py          FastAPI server — WebSocket real-time dashboard, scan loops, auto-buy logic
-  templates/      Dashboard HTML
+  templates/      Dashboard HTML (live activity feed, scan progress, portfolio panel)
   static/         CSS/JS assets
 
 config/
@@ -153,7 +165,7 @@ config/
   .env            API keys (never committed — copy from credentials.env template)
 
 data/
-  aitrading.db    SQLite database (positions, trade history, watchlist, portfolio state)
+  aitrading.db    SQLite database (positions, trade history, watchlist, portfolio state, scan cursor)
 ```
 
 ---
@@ -203,7 +215,7 @@ NEWSAPI_API_KEY=your_key
 python -m uvicorn web.app:app --host 0.0.0.0 --port 8080
 ```
 
-Open `http://localhost:8080` to view the live dashboard. The system scans automatically at scheduled times. Use the **Force Scan** button to run a scan outside market hours.
+Open `http://localhost:8080` to view the live dashboard. The system scans automatically at scheduled times and begins filling the watchlist immediately at market open. Use the **Force Scan** button to run a scan on demand.
 
 ### Paper vs Live Trading
 
@@ -221,6 +233,6 @@ The system defaults to **paper trading** mode via Alpaca's paper trading API. To
 - **News**: NewsAPI, Finnhub
 - **SEC Filings**: SEC EDGAR (Form 4 insider transactions)
 - **Broker**: Alpaca (paper + live)
-- **Dashboard**: FastAPI + WebSocket (real-time updates)
+- **Dashboard**: FastAPI + WebSocket (real-time updates, live activity feed)
 - **Database**: SQLite
 - **Language**: Python 3.12, fully async (asyncio)
