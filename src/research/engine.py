@@ -158,8 +158,8 @@ Based on all of the above, provide your analysis as JSON with these exact fields
     "risk_factors": "<key risks that could invalidate the thesis>",
     "recommended_action": "<specific action to take>",
     "entry_price": <recommended entry price as number>,
-    "stop_loss": <stop loss price as number>,
-    "take_profit_targets": [<T1>, <T2>, <T3>],
+    "stop_loss": <stop loss price as number — typically 5-8% below entry>,
+    "take_profit_targets": [<T1 — near-term resistance, 4-6% above entry>, <T2 — 8-12% above entry>, <T3 — full fair value target, 15-20% above entry max>],
     "position_size_pct": <recommended position size as % of portfolio, 1-10>,
     "time_horizon": "<days|weeks|months>",
     "reasoning": "<detailed reasoning connecting all research dimensions>"
