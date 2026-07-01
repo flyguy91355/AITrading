@@ -26,10 +26,12 @@ class OrderManager:
         self.broker: Broker | None = None
         self.active_orders: dict[str, Order] = {}
 
-        # ticker → list of {order_id, shares, target, tranche}
+        # ticker → list of {order_id, shares, target, tranche} (active in broker)
         self._tp_orders: dict[str, list[dict]] = {}
         # ticker → current stop-loss order ID
         self._stop_order_ids: dict[str, str] = {}
+        # ticker → [(shares, target_price)] for TPs not yet placed (waiting for prior TP to fill)
+        self._queued_tps: dict[str, list[tuple[float, float]]] = {}
         # pending info for orders not yet filled (after-hours market orders)
         self._pending_stops: dict[str, dict] = {}
 
@@ -124,11 +126,58 @@ class OrderManager:
         self, ticker: str, shares: float,
         stop_price: float, targets: list[float],
     ):
-        """Place 3 take-profit limit orders. Stop loss is enforced in software by
-        the position monitor loop — placing a broker stop order alongside 3 TP orders
-        would exceed the position size and get rejected by Alpaca."""
-        # Stop price is stored on the Position object; position_monitor_loop handles it
-        logger.info("Stop loss tracked in software for %s @ $%.2f", ticker, stop_price)
+        """Place stop loss + take-profit orders sequentially so total pending sells
+        never exceed position size (Alpaca constraint).
+
+        Strategy:
+          Initial  : stop(t2+t3) + TP1(t1)      = 100% of shares
+          After TP1: stop(t3)    + TP2(t2)       = 2/3 remaining
+          After TP2: TP3(t3) only, no stop needed = last 1/3
+        """
+        if len(targets) < 3:
+            logger.warning("_place_exit_orders: need 3 targets for %s, got %d", ticker, len(targets))
+            return
+
+        t1, t2, t3 = _split_thirds(shares)
+
+        # ── Stop loss covers shares NOT yet handled by TP1 ──
+        stop_shares = round(t2 + t3, 9)
+        if stop_price and stop_price > 0 and stop_shares > 0:
+            try:
+                stop_order = Order(
+                    ticker=ticker, side=OrderSide.SELL,
+                    order_type=OrderType.STOP,
+                    quantity=stop_shares,
+                    stop_price=round(stop_price, 2),
+                )
+                stop_result = await self.broker.submit_order(stop_order)
+                self.active_orders[stop_result.broker_order_id] = stop_result
+                self._stop_order_ids[ticker] = stop_result.broker_order_id
+                logger.info("Stop placed for %s: %.4g shares @ $%.2f", ticker, stop_shares, stop_price)
+            except Exception as e:
+                logger.warning("Stop order failed for %s: %s", ticker, e)
+
+        # ── Place only TP1; queue TP2 and TP3 for after TP1 fills ──
+        self._tp_orders[ticker] = []
+        self._queued_tps[ticker] = [(t2, targets[1]), (t3, targets[2])]
+        try:
+            tp_order = Order(
+                ticker=ticker, side=OrderSide.SELL,
+                order_type=OrderType.LIMIT,
+                quantity=round(t1, 9),
+                limit_price=round(targets[0], 2),
+            )
+            tp_result = await self.broker.submit_order(tp_order)
+            self.active_orders[tp_result.broker_order_id] = tp_result
+            self._tp_orders[ticker].append({
+                "order_id": tp_result.broker_order_id,
+                "shares": t1,
+                "target": targets[0],
+                "tranche": 1,
+            })
+            logger.info("TP1 placed for %s: %.4g shares @ $%.2f", ticker, t1, targets[0])
+        except Exception as e:
+            logger.warning("TP1 order failed for %s: %s", ticker, e)
 
         # ── Take-profit limit orders (sell ⅓ at each target) ──
         if targets:
@@ -185,9 +234,13 @@ class OrderManager:
         return result
 
     async def _cancel_exit_orders(self, ticker: str):
-        """Cancel all open take-profit orders for a ticker."""
+        """Cancel all open stop and take-profit orders for a ticker."""
+        stop_id = self._stop_order_ids.pop(ticker, None)
+        if stop_id:
+            await self.cancel(stop_id)
         for tp in self._tp_orders.pop(ticker, []):
             await self.cancel(tp["order_id"])
+        self._queued_tps.pop(ticker, None)
 
     async def cancel(self, broker_order_id: str) -> bool:
         success = await self.broker.cancel_order(broker_order_id)
@@ -229,12 +282,62 @@ class OrderManager:
             if shares_sold > 0:
                 pos = self.portfolio.positions.get(ticker)
                 if pos and pos.shares <= 0.001:
-                    # All shares sold via take-profits — position fully closed
+                    # All shares sold — cancel any remaining stop and close position
+                    old_stop = self._stop_order_ids.pop(ticker, None)
+                    if old_stop:
+                        await self.cancel(old_stop)
+                    self._queued_tps.pop(ticker, None)
                     self.portfolio.close_position(ticker)
                     logger.info("Position %s fully closed via take-profit orders", ticker)
                 elif pos:
-                    logger.info("TP filled for %s — %.4g shares remaining, stop still active at $%.2f",
-                                ticker, pos.shares, pos.stop_loss)
+                    # Place next queued TP, update stop to cover only remaining shares
+                    queued = self._queued_tps.get(ticker, [])
+                    if queued:
+                        next_tp_shares, next_tp_price = queued[0]
+                        remaining_after_next = pos.shares - next_tp_shares
+
+                        # Update stop to cover shares the next TP won't handle
+                        old_stop = self._stop_order_ids.pop(ticker, None)
+                        if old_stop:
+                            await self.cancel(old_stop)
+                        if remaining_after_next > 0.001:
+                            try:
+                                stop_order = Order(
+                                    ticker=ticker, side=OrderSide.SELL,
+                                    order_type=OrderType.STOP,
+                                    quantity=round(remaining_after_next, 9),
+                                    stop_price=round(pos.stop_loss, 2),
+                                )
+                                stop_result = await self.broker.submit_order(stop_order)
+                                self.active_orders[stop_result.broker_order_id] = stop_result
+                                self._stop_order_ids[ticker] = stop_result.broker_order_id
+                                logger.info("Stop updated for %s: %.4g shares @ $%.2f",
+                                            ticker, remaining_after_next, pos.stop_loss)
+                            except Exception as e:
+                                logger.warning("Stop update failed for %s: %s", ticker, e)
+
+                        # Place the next TP
+                        try:
+                            tranche_num = len(queued)  # 2 queued→TP2, 1 queued→TP3
+                            tp_order = Order(
+                                ticker=ticker, side=OrderSide.SELL,
+                                order_type=OrderType.LIMIT,
+                                quantity=round(next_tp_shares, 9),
+                                limit_price=round(next_tp_price, 2),
+                            )
+                            tp_result = await self.broker.submit_order(tp_order)
+                            self.active_orders[tp_result.broker_order_id] = tp_result
+                            self._tp_orders[ticker].append({
+                                "order_id": tp_result.broker_order_id,
+                                "shares": next_tp_shares,
+                                "target": next_tp_price,
+                                "tranche": 4 - tranche_num,
+                            })
+                            self._queued_tps[ticker] = queued[1:]
+                            logger.info("TP%d placed for %s: %.4g shares @ $%.2f",
+                                        4 - tranche_num, ticker, next_tp_shares, next_tp_price)
+                        except Exception as e:
+                            logger.warning("Next TP order failed for %s: %s", ticker, e)
 
     async def update_positions(self):
         if not self.broker:
